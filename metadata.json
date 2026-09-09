@@ -1,0 +1,6 @@
+{
+  "name": "Car Hisab",
+  "description": "Car Hisab - আধুনিক ডার্ক-গ্রিন থিমে ডিজাইন করা গাড়ির আয়, ব্যয় এবং ট্রিপ ট্র্যাকিং অ্যাপ।",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
