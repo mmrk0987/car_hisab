@@ -92,6 +92,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.auth.EmailOtpManager
+import com.example.data.auth.SupabaseAuthManager
 import com.example.ui.i18n.AppLanguage
 import com.example.ui.theme.DarkGreenBorder
 import com.example.ui.theme.DarkGreenCard
@@ -111,6 +112,8 @@ fun LoginScreen(
   otpApiKey: String = "",
   otpWebhookUrl: String = "",
   otpSenderEmail: String = "",
+  supabaseUrl: String = SupabaseAuthManager.DEFAULT_SUPABASE_URL,
+  supabaseAnonKey: String = SupabaseAuthManager.DEFAULT_ANON_KEY,
   onSaveOtpSettings: (provider: String, apiKey: String, webhook: String, sender: String) -> Unit = { _, _, _, _ -> },
   onLoginSuccess: (email: String, remember: Boolean) -> Unit = { _, _ -> },
   onSignUpSuccess: (email: String, phone: String) -> Unit = { _, _ -> }
@@ -126,6 +129,7 @@ fun LoginScreen(
   var rememberEmail by remember { mutableStateOf(savedRememberEmail) }
   var isLoginPasswordVisible by remember { mutableStateOf(false) }
   var loginError by remember { mutableStateOf<String?>(null) }
+  var isLoggingIn by remember { mutableStateOf(false) }
   var showFingerprintDialog by remember { mutableStateOf(false) }
 
   // Sign Up States
@@ -136,6 +140,7 @@ fun LoginScreen(
   var isSignUpPasswordVisible by remember { mutableStateOf(false) }
   var isRetypePasswordVisible by remember { mutableStateOf(false) }
   var signUpError by remember { mutableStateOf<String?>(null) }
+  var isSigningUp by remember { mutableStateOf(false) }
 
   // Email OTP Modal & Dispatch States
   var showOtpModal by remember { mutableStateOf(false) }
@@ -215,7 +220,6 @@ fun LoginScreen(
         signUpGmail = detectedAccounts.first()
         signUpError = null
       } else {
-        // Prepare account chooser
         try {
           val intent = AccountManager.newChooseAccountIntent(
             null,
@@ -286,7 +290,7 @@ fun LoginScreen(
       )
 
       Text(
-        text = if (language == AppLanguage.BANGLA) "ড্রাইভার ও গাড়ির হিসাবের আধুনিক অ্যাপ" else "Modern Fleet & Driver Financial System",
+        text = if (language == AppLanguage.BANGLA) "ড্রাইভার ও গাড়ির হিসাবের আধুনিক অ্যাপ (Supabase Auth)" else "Modern Fleet & Driver Financial System (Supabase Auth)",
         fontSize = 13.sp,
         color = Color(0xFF94A3B8),
         textAlign = TextAlign.Center,
@@ -452,19 +456,40 @@ fun LoginScreen(
 
           Spacer(modifier = Modifier.height(18.dp))
 
-          // Primary Login Button
+          // Primary Login Button (Integrated with Supabase Auth)
           Button(
             onClick = {
-              if (loginEmail.isBlank()) {
+              val email = loginEmail.trim()
+              val password = loginPassword.trim()
+              if (email.isBlank()) {
                 loginError = if (language == AppLanguage.BANGLA) "দয়া করে ইমেইল দিন" else "Please enter your email"
                 return@Button
               }
-              if (loginPassword.isBlank()) {
+              if (password.isBlank()) {
                 loginError = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড দিন" else "Please enter password"
                 return@Button
               }
-              onLoginSuccess(loginEmail.trim(), rememberEmail)
+
+              isLoggingIn = true
+              loginError = null
+
+              coroutineScope.launch {
+                val authResult = SupabaseAuthManager.loginWithEmail(
+                  email = email,
+                  password = password,
+                  baseUrl = supabaseUrl,
+                  anonKey = supabaseAnonKey
+                )
+                isLoggingIn = false
+
+                if (authResult.success) {
+                  onLoginSuccess(authResult.email ?: email, rememberEmail)
+                } else {
+                  loginError = authResult.message
+                }
+              }
             },
+            enabled = !isLoggingIn,
             modifier = Modifier
               .fillMaxWidth()
               .height(54.dp)
@@ -472,17 +497,25 @@ fun LoginScreen(
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
           ) {
-            Text(
-              text = if (language == AppLanguage.BANGLA) "লগইন করুন" else "Log In",
-              fontSize = 16.sp,
-              fontWeight = FontWeight.Bold,
-              color = Color(0xFF022B1E)
-            )
+            if (isLoggingIn) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                color = Color(0xFF022B1E),
+                strokeWidth = 2.5.dp
+              )
+            } else {
+              Text(
+                text = if (language == AppLanguage.BANGLA) "Supabase-এ লগইন করুন" else "Log In with Supabase",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF022B1E)
+              )
+            }
           }
 
           Spacer(modifier = Modifier.height(10.dp))
 
-          // Real Email OTP Direct Login Button
+          // Supabase Email OTP Direct Login Button
           OutlinedButton(
             onClick = {
               val email = loginEmail.trim().lowercase()
@@ -501,17 +534,32 @@ fun LoginScreen(
               resendCountdown = 60
 
               coroutineScope.launch {
-                val result = EmailOtpManager.sendOtp(
-                  recipientEmail = email,
-                  provider = otpProvider,
-                  apiKey = otpApiKey,
-                  webhookUrl = otpWebhookUrl,
-                  senderEmail = otpSenderEmail
+                // Try Supabase OTP dispatch
+                val supabaseResult = SupabaseAuthManager.sendEmailOtp(
+                  email = email,
+                  baseUrl = supabaseUrl,
+                  anonKey = supabaseAnonKey
                 )
-                isSendingOtp = false
-                isRealEmailSent = result.isRealEmailSent
-                activeOtpCode = result.code
-                otpSendStatusMessage = result.message
+
+                if (supabaseResult.success) {
+                  isSendingOtp = false
+                  isRealEmailSent = true
+                  activeOtpCode = ""
+                  otpSendStatusMessage = supabaseResult.message
+                } else {
+                  // Fallback to Brevo/configured provider if Supabase OTP email isn't configured in project settings
+                  val result = EmailOtpManager.sendOtp(
+                    recipientEmail = email,
+                    provider = otpProvider,
+                    apiKey = otpApiKey,
+                    webhookUrl = otpWebhookUrl,
+                    senderEmail = otpSenderEmail
+                  )
+                  isSendingOtp = false
+                  isRealEmailSent = result.isRealEmailSent
+                  activeOtpCode = result.code
+                  otpSendStatusMessage = result.message
+                }
               }
             },
             modifier = Modifier
@@ -543,7 +591,7 @@ fun LoginScreen(
               .fillMaxWidth()
               .height(54.dp)
               .clip(RoundedCornerShape(16.dp))
-              .clickable { 
+              .clickable {
                 if (savedEmail.isNotBlank() && savedRememberEmail) {
                   authenticateWithBiometric(context, language) {
                     onLoginSuccess(savedEmail, savedRememberEmail)
@@ -579,7 +627,7 @@ fun LoginScreen(
         }
       }
 
-      // TAB 1: SIGN UP CONTENT (Gmail only, Password + Retype, Phone + OTP to Gmail)
+      // TAB 1: SIGN UP CONTENT
       if (selectedTab == 1) {
         Column(modifier = Modifier.fillMaxWidth()) {
           // Device Gmail Auto-Detection Banner
@@ -885,51 +933,50 @@ fun LoginScreen(
 
           Spacer(modifier = Modifier.height(20.dp))
 
-          // Sign Up / Send Real OTP to Gmail Button
+          // Sign Up / Supabase Register Button
           Button(
             onClick = {
               val email = signUpGmail.trim().lowercase()
+              val phone = signUpPhone.trim()
+              val password = signUpPassword
               if (!email.endsWith("@gmail.com") || email.length <= 10) {
                 signUpError = if (language == AppLanguage.BANGLA) "শুধুমাত্র বৈধ Gmail (@gmail.com) দিয়ে সাইন আপ সম্ভব" else "Only valid Gmail (@gmail.com) allowed"
                 return@Button
               }
-              if (signUpPhone.trim().length < 11) {
+              if (phone.length < 11) {
                 signUpError = if (language == AppLanguage.BANGLA) "সঠিক ১১-সংখ্যার মোবাইল নম্বর দিন" else "Enter valid 11-digit phone number"
                 return@Button
               }
-              if (signUpPassword.length < 6) {
+              if (password.length < 6) {
                 signUpError = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে" else "Password must be at least 6 characters"
                 return@Button
               }
-              if (signUpPassword != signUpRetypePassword) {
+              if (password != signUpRetypePassword) {
                 signUpError = if (language == AppLanguage.BANGLA) "উভয় পাসওয়ার্ড মিলছে না" else "Passwords do not match"
                 return@Button
               }
 
               signUpError = null
-              otpTargetEmail = email
-              otpTargetPhone = signUpPhone.trim()
-              otpIsForLogin = false
-              otpInput = ""
-              otpModalError = null
-              isSendingOtp = true
-              showOtpModal = true
-              resendCountdown = 60
+              isSigningUp = true
 
               coroutineScope.launch {
-                val result = EmailOtpManager.sendOtp(
-                  recipientEmail = email,
-                  provider = otpProvider,
-                  apiKey = otpApiKey,
-                  webhookUrl = otpWebhookUrl,
-                  senderEmail = otpSenderEmail
+                val supabaseResult = SupabaseAuthManager.signUpWithEmail(
+                  email = email,
+                  password = password,
+                  phone = phone,
+                  baseUrl = supabaseUrl,
+                  anonKey = supabaseAnonKey
                 )
-                isSendingOtp = false
-                isRealEmailSent = result.isRealEmailSent
-                activeOtpCode = result.code
-                otpSendStatusMessage = result.message
+                isSigningUp = false
+
+                if (supabaseResult.success) {
+                  onSignUpSuccess(email, phone)
+                } else {
+                  signUpError = supabaseResult.message
+                }
               }
             },
+            enabled = !isSigningUp,
             modifier = Modifier
               .fillMaxWidth()
               .height(54.dp)
@@ -937,14 +984,22 @@ fun LoginScreen(
             shape = RoundedCornerShape(16.dp),
             colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
           ) {
-            Icon(Icons.Default.MarkEmailRead, contentDescription = null, tint = Color(0xFF022B1E))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = if (language == AppLanguage.BANGLA) "ওটিপি পাঠান ও একাউন্ট খুলুন" else "Send OTP & Register",
-              fontSize = 15.sp,
-              fontWeight = FontWeight.Bold,
-              color = Color(0xFF022B1E)
-            )
+            if (isSigningUp) {
+              CircularProgressIndicator(
+                modifier = Modifier.size(24.dp),
+                color = Color(0xFF022B1E),
+                strokeWidth = 2.5.dp
+              )
+            } else {
+              Icon(Icons.Default.MarkEmailRead, contentDescription = null, tint = Color(0xFF022B1E))
+              Spacer(modifier = Modifier.width(8.dp))
+              Text(
+                text = if (language == AppLanguage.BANGLA) "Supabase-এ একাউন্ট খুলুন" else "Register with Supabase",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF022B1E)
+              )
+            }
           }
         }
       }
@@ -1065,10 +1120,10 @@ fun LoginScreen(
                   )
                   Spacer(modifier = Modifier.width(8.dp))
                   Text(
-                    text = if (language == AppLanguage.BANGLA)
+                    text = otpSendStatusMessage ?: (if (language == AppLanguage.BANGLA)
                       "আপনার জিমেইলে আসল ওটিপি পাঠানো হয়েছে! ইনবক্স এবং স্প্যাম ফোল্ডার দেখুন।"
                     else
-                      "Real OTP delivered to your inbox! Check your inbox or spam.",
+                      "Real OTP delivered to your inbox! Check your inbox or spam."),
                     fontSize = 12.sp,
                     color = Color(0xFFD1FAE5),
                     lineHeight = 16.sp
@@ -1076,7 +1131,6 @@ fun LoginScreen(
                 }
               }
             } else if (otpSendStatusMessage != null) {
-              // Real Error/Configuration guidance card (No demo / test mode)
               Card(
                 modifier = Modifier
                   .fillMaxWidth()
@@ -1112,28 +1166,6 @@ fun LoginScreen(
                     color = Color(0xFFFECACA),
                     lineHeight = 16.sp
                   )
-                  Spacer(modifier = Modifier.height(8.dp))
-                  OutlinedButton(
-                    onClick = { showGatewayConfig = true },
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MintGreenAccent),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MintGreenAccent.copy(alpha = 0.6f)),
-                    modifier = Modifier.align(Alignment.End)
-                  ) {
-                    Icon(
-                      imageVector = Icons.Default.Key,
-                      contentDescription = null,
-                      modifier = Modifier.size(14.dp),
-                      tint = MintGreenAccent
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                      text = if (language == AppLanguage.BANGLA) "Brevo API Key দিন" else "Enter Brevo Key",
-                      fontSize = 11.sp,
-                      fontWeight = FontWeight.Bold,
-                      color = MintGreenAccent
-                    )
-                  }
                 }
               }
             }
@@ -1215,17 +1247,29 @@ fun LoginScreen(
                     isSendingOtp = true
                     otpModalError = null
                     coroutineScope.launch {
-                      val result = EmailOtpManager.sendOtp(
-                        recipientEmail = otpTargetEmail,
-                        provider = otpProvider,
-                        apiKey = otpApiKey,
-                        webhookUrl = otpWebhookUrl,
-                        senderEmail = otpSenderEmail
+                      val supabaseResult = SupabaseAuthManager.sendEmailOtp(
+                        email = otpTargetEmail,
+                        baseUrl = supabaseUrl,
+                        anonKey = supabaseAnonKey
                       )
-                      isSendingOtp = false
-                      isRealEmailSent = result.isRealEmailSent
-                      activeOtpCode = result.code
-                      otpSendStatusMessage = result.message
+                      if (supabaseResult.success) {
+                        isSendingOtp = false
+                        isRealEmailSent = true
+                        activeOtpCode = ""
+                        otpSendStatusMessage = supabaseResult.message
+                      } else {
+                        val result = EmailOtpManager.sendOtp(
+                          recipientEmail = otpTargetEmail,
+                          provider = otpProvider,
+                          apiKey = otpApiKey,
+                          webhookUrl = otpWebhookUrl,
+                          senderEmail = otpSenderEmail
+                        )
+                        isSendingOtp = false
+                        isRealEmailSent = result.isRealEmailSent
+                        activeOtpCode = result.code
+                        otpSendStatusMessage = result.message
+                      }
                     }
                   },
                   modifier = Modifier.testTag("otp_resend_button")
@@ -1246,204 +1290,41 @@ fun LoginScreen(
                 }
               }
             }
-
-            // Expandable Gateway Quick Config
-            TextButton(
-              onClick = { showGatewayConfig = !showGatewayConfig },
-              modifier = Modifier.padding(top = 4.dp)
-            ) {
-              Icon(
-                imageVector = Icons.Default.Settings,
-                contentDescription = null,
-                tint = MintGreenAccent,
-                modifier = Modifier.size(14.dp)
-              )
-              Spacer(modifier = Modifier.width(4.dp))
-              Text(
-                text = if (language == AppLanguage.BANGLA) "Brevo (Sendinblue) API সেটিংস" else "Brevo Email API Settings",
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MintGreenAccent
-              )
-            }
-
-            if (showGatewayConfig) {
-              Card(
-                modifier = Modifier
-                  .fillMaxWidth()
-                  .padding(vertical = 6.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkGreenCard),
-                border = androidx.compose.foundation.BorderStroke(1.dp, DarkGreenBorder)
-              ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                  Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Text(
-                      text = if (language == AppLanguage.BANGLA) "Brevo API কনফিগারেশন" else "Brevo API Setup",
-                      fontSize = 13.sp,
-                      fontWeight = FontWeight.Bold,
-                      color = Color.White
-                    )
-                    Surface(
-                      shape = RoundedCornerShape(6.dp),
-                      color = ProfitGreen.copy(alpha = 0.2f),
-                      border = androidx.compose.foundation.BorderStroke(1.dp, ProfitGreen.copy(alpha = 0.5f))
-                    ) {
-                      Text(
-                        text = if (language == AppLanguage.BANGLA) "৩০০ ইমেইল/দিন ফ্রি" else "300 emails/day free",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ProfitGreen,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                      )
-                    }
-                  }
-
-                  Spacer(modifier = Modifier.height(4.dp))
-                  Text(
-                    text = if (language == AppLanguage.BANGLA)
-                      "Brevo.com এ ফ্রি একাউন্ট খুলে 'SMTP & API' মেনু থেকে API Key তৈরি করুন।"
-                    else
-                      "Sign up free at brevo.com, go to SMTP & API and generate an API key.",
-                    fontSize = 11.sp,
-                    color = Color(0xFF94A3B8),
-                    lineHeight = 15.sp
-                  )
-
-                  Spacer(modifier = Modifier.height(8.dp))
-
-                  Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                  ) {
-                    FilterChip(
-                      selected = tempProvider.equals("BREVO", ignoreCase = true),
-                      onClick = { tempProvider = "BREVO" },
-                      label = { Text("Brevo (300/day Free)", fontSize = 11.sp) }
-                    )
-                    FilterChip(
-                      selected = tempProvider.equals("RESEND", ignoreCase = true),
-                      onClick = { tempProvider = "RESEND" },
-                      label = { Text("Resend (3k/mo)", fontSize = 11.sp) }
-                    )
-                  }
-
-                  Spacer(modifier = Modifier.height(8.dp))
-
-                  // API Key Field
-                  Text(
-                    text = if (tempProvider.equals("BREVO", true)) "Brevo API Key (xkeysib-...):" else "Resend API Key (re_...):",
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFFE2E8F0)
-                  )
-                  Spacer(modifier = Modifier.height(4.dp))
-                  OutlinedTextField(
-                    value = tempApiKey,
-                    onValueChange = { tempApiKey = it },
-                    placeholder = { Text(if (tempProvider.equals("BREVO", true)) "xkeysib-..." else "re_...", fontSize = 11.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                      focusedContainerColor = DarkGreenSurface,
-                      unfocusedContainerColor = DarkGreenSurface,
-                      focusedTextColor = Color.White,
-                      unfocusedTextColor = Color(0xFFCBD5E1)
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                  )
-
-                  Spacer(modifier = Modifier.height(8.dp))
-
-                  // Sender Email Field
-                  Text(
-                    text = if (language == AppLanguage.BANGLA) "Brevo প্রেরকের ইমেইল (Verified Sender):" else "Brevo Sender Email:",
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFFE2E8F0)
-                  )
-                  Spacer(modifier = Modifier.height(4.dp))
-                  OutlinedTextField(
-                    value = tempSenderEmail,
-                    onValueChange = { tempSenderEmail = it },
-                    placeholder = { Text(if (otpTargetEmail.isNotBlank()) otpTargetEmail else "your-brevo-email@gmail.com", fontSize = 11.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                      focusedContainerColor = DarkGreenSurface,
-                      unfocusedContainerColor = DarkGreenSurface,
-                      focusedTextColor = Color.White,
-                      unfocusedTextColor = Color(0xFFCBD5E1)
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                  )
-
-                  Spacer(modifier = Modifier.height(10.dp))
-
-                  Button(
-                    onClick = {
-                      val savedKey = tempApiKey.trim()
-                      val savedSender = tempSenderEmail.trim()
-                      onSaveOtpSettings(tempProvider, savedKey, otpWebhookUrl, savedSender)
-                      showGatewayConfig = false
-                      android.widget.Toast.makeText(
-                        context,
-                        if (language == AppLanguage.BANGLA) "Brevo সেটিংস সংরক্ষিত হয়েছে!" else "Brevo settings saved!",
-                        android.widget.Toast.LENGTH_SHORT
-                      ).show()
-
-                      // Immediate real OTP dispatch with the updated key
-                      isSendingOtp = true
-                      otpModalError = null
-                      coroutineScope.launch {
-                        val result = EmailOtpManager.sendOtp(
-                          recipientEmail = otpTargetEmail,
-                          provider = tempProvider,
-                          apiKey = savedKey,
-                          webhookUrl = otpWebhookUrl,
-                          senderEmail = savedSender
-                        )
-                        isSendingOtp = false
-                        isRealEmailSent = result.isRealEmailSent
-                        activeOtpCode = result.code
-                        otpSendStatusMessage = result.message
-                      }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
-                  ) {
-                    Icon(Icons.Default.Send, contentDescription = null, tint = Color(0xFF022B1E), modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                      text = if (language == AppLanguage.BANGLA) "সেভ করুন ও ওটিপি পাঠান" else "Save & Dispatch Real OTP",
-                      fontSize = 12.sp,
-                      fontWeight = FontWeight.Bold,
-                      color = Color(0xFF022B1E)
-                    )
-                  }
-                }
-              }
-            }
           }
         },
         confirmButton = {
           Button(
             onClick = {
-              val (verified, message) = EmailOtpManager.verifyOtp(otpInput, otpTargetEmail)
-              if (verified) {
-                showOtpModal = false
-                if (otpIsForLogin) {
-                  onLoginSuccess(otpTargetEmail, rememberEmail)
+              coroutineScope.launch {
+                // Try Supabase OTP verification first
+                val supabaseResult = SupabaseAuthManager.verifyEmailOtp(
+                  email = otpTargetEmail,
+                  token = otpInput,
+                  baseUrl = supabaseUrl,
+                  anonKey = supabaseAnonKey
+                )
+
+                if (supabaseResult.success) {
+                  showOtpModal = false
+                  if (otpIsForLogin) {
+                    onLoginSuccess(otpTargetEmail, rememberEmail)
+                  } else {
+                    onSignUpSuccess(otpTargetEmail, otpTargetPhone)
+                  }
                 } else {
-                  onSignUpSuccess(otpTargetEmail, otpTargetPhone)
+                  // Fall back to EmailOtpManager verification if activeCode was used
+                  val (verified, message) = EmailOtpManager.verifyOtp(otpInput, otpTargetEmail)
+                  if (verified) {
+                    showOtpModal = false
+                    if (otpIsForLogin) {
+                      onLoginSuccess(otpTargetEmail, rememberEmail)
+                    } else {
+                      onSignUpSuccess(otpTargetEmail, otpTargetPhone)
+                    }
+                  } else {
+                    otpModalError = supabaseResult.message.ifBlank { message }
+                  }
                 }
-              } else {
-                otpModalError = message
               }
             },
             modifier = Modifier
