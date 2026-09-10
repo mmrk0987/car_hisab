@@ -601,30 +601,48 @@ fun DriveBackupScreen(
           )
         },
         text = {
-          Text(
-            text = if (language == AppLanguage.BANGLA)
-              "গুগল ড্রাইভে সংরক্ষিত ট্রিপ ও হিসাবের ডাটা বর্তমান অ্যাপে ইমপোর্ট হবে। আপনি কি নিশ্চিত?"
-            else
-              "Trip and financial data saved on Google Drive will be restored to this app. Are you sure you want to proceed?",
-            color = Color(0xFFCBD5E1),
-            fontSize = 13.sp
-          )
-        },
-        confirmButton = {
-          Button(
-            onClick = {
-              showRestoreConfirmDialog = false
-              filePickerLauncher.launch("*/*")
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
-          ) {
+          Column {
             Text(
-              text = if (language == AppLanguage.BANGLA) "হ্যাঁ, রিস্টোর করুন" else "Yes, Restore",
-              color = Color(0xFF022B1E),
-              fontWeight = FontWeight.Bold
+              text = if (language == AppLanguage.BANGLA)
+                "গুগল ড্রাইভে সংরক্ষিত ট্রিপ, বুকিং ও হিসাবের ডাটা বর্তমান অ্যাপে ইমপোর্ট হবে।"
+              else
+                "Trip and financial data saved on Google Drive will be restored to this app.",
+              color = Color(0xFFCBD5E1),
+              fontSize = 13.sp
             )
+            Spacer(modifier = Modifier.height(14.dp))
+            Button(
+              onClick = {
+                showRestoreConfirmDialog = false
+                onGoogleDriveRestore(null)
+              },
+              modifier = Modifier.fillMaxWidth(),
+              colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
+            ) {
+              Text(
+                text = if (language == AppLanguage.BANGLA) "☁️ ড্রাইভ থেকে অটো রিস্টোর করুন" else "☁️ Auto Restore from Drive",
+                color = Color(0xFF022B1E),
+                fontWeight = FontWeight.Bold
+              )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+              onClick = {
+                showRestoreConfirmDialog = false
+                filePickerLauncher.launch("*/*")
+              },
+              modifier = Modifier.fillMaxWidth(),
+              border = androidx.compose.foundation.BorderStroke(1.dp, MintGreenAccent.copy(alpha = 0.6f))
+            ) {
+              Text(
+                text = if (language == AppLanguage.BANGLA) "📂 ফাইল সিলেক্ট করে রিস্টোর করুন" else "📂 Select File Manually",
+                color = MintGreenAccent,
+                fontWeight = FontWeight.SemiBold
+              )
+            }
           }
         },
+        confirmButton = {},
         dismissButton = {
           TextButton(onClick = { showRestoreConfirmDialog = false }) {
             Text(

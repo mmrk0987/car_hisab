@@ -985,6 +985,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
 
   fun performGoogleDriveBackup(
     context: Context,
+    account: com.google.android.gms.auth.api.signin.GoogleSignInAccount? = null,
     onSuccess: (count: Int) -> Unit,
     onError: (String) -> Unit
   ) {
@@ -992,25 +993,50 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       _isBackingUp.value = true
       try {
         val trips = tripRepo.getAllTripsSnapshot()
-        if (trips.isEmpty()) {
+        val bookings = bookingRepo.getAllBookingsSnapshot()
+        val profile = userProfile.value
+        val documents = vehicleDocuments.value
+        val mobil = mobilServiceInfo.value
+
+        if (trips.isEmpty() && bookings.isEmpty()) {
           _isBackingUp.value = false
-          onError("No trips to back up")
+          onError("কোনো ট্রিপ বা বুকিংয়ের হিসাব পাওয়া যায়নি। / No trips or bookings to back up")
           return@launch
         }
-        val profile = userProfile.value
-        val backupFile = GoogleDriveBackupManager.createLocalBackupFile(context, trips, profile)
-        
-        val now = System.currentTimeMillis()
-        userPrefsRepo.setLastDriveBackupTime(now)
-        userPrefsRepo.setLastBackupTripCount(trips.size)
-        _lastBackupTime.value = now
-        _lastBackupCount.value = trips.size
 
-        // Launch Drive Share / Upload Picker
-        GoogleDriveBackupManager.openDriveSaveIntent(context, backupFile)
-        
-        _backupStatusMessage.value = "Backup created: ${trips.size} trips"
-        onSuccess(trips.size)
+        val fullJson = GoogleDriveBackupManager.serializeFullBackupJson(
+          trips = trips,
+          bookings = bookings,
+          profile = profile,
+          documents = documents,
+          mobilService = mobil
+        )
+
+        val signedAccount = account ?: GoogleDriveBackupManager.getSignedInAccount(context)
+        if (signedAccount != null) {
+          val result = GoogleDriveBackupManager.uploadBackupToDrive(context, signedAccount, fullJson)
+          if (result.isSuccess) {
+            val totalCount = trips.size + bookings.size
+            val now = System.currentTimeMillis()
+            userPrefsRepo.setLastDriveBackupTime(now)
+            userPrefsRepo.setLastBackupTripCount(totalCount)
+            _lastBackupTime.value = now
+            _lastBackupCount.value = totalCount
+
+            _backupStatusMessage.value = "গুগল ড্রাইভে $totalCount টি হিসাব সফলভাবে ব্যাকআপ করা হয়েছে!"
+            onSuccess(totalCount)
+          } else {
+            val errMessage = result.exceptionOrNull()?.localizedMessage ?: "গুগল ড্রাইভে ব্যাকআপ করতে সমস্যা হয়েছে।"
+            val localFile = GoogleDriveBackupManager.createLocalBackupFile(context, trips, bookings, profile, documents, mobil)
+            GoogleDriveBackupManager.openDriveSaveIntent(context, localFile)
+            onError(errMessage)
+          }
+        } else {
+          val localFile = GoogleDriveBackupManager.createLocalBackupFile(context, trips, bookings, profile, documents, mobil)
+          GoogleDriveBackupManager.openDriveSaveIntent(context, localFile)
+          _backupStatusMessage.value = "লোকাল ব্যাকআপ ফাইল তৈরি করা হয়েছে"
+          onSuccess(trips.size + bookings.size)
+        }
       } catch (e: Exception) {
         onError(e.localizedMessage ?: "Backup failed")
       } finally {
@@ -1021,6 +1047,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
 
   fun performGoogleDriveRestore(
     context: Context,
+    account: com.google.android.gms.auth.api.signin.GoogleSignInAccount? = null,
     uri: Uri? = null,
     onSuccess: (count: Int) -> Unit,
     onError: (String) -> Unit
@@ -1028,27 +1055,73 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch {
       _isRestoring.value = true
       try {
-        val restoredTrips = if (uri != null) {
-          GoogleDriveBackupManager.readTripsFromUri(context, uri)
+        val payload: com.example.data.drive.RestoredDataPayload = if (uri != null) {
+          GoogleDriveBackupManager.readFullPayloadFromUri(context, uri)
         } else {
-          GoogleDriveBackupManager.readTripsFromLatestBackup(context)
+          val signedAccount = account ?: GoogleDriveBackupManager.getSignedInAccount(context)
+          if (signedAccount != null) {
+            val result = GoogleDriveBackupManager.downloadBackupFromDrive(context, signedAccount)
+            if (result.isSuccess) {
+              result.getOrThrow()
+            } else {
+              val exception = result.exceptionOrNull()
+              val msg = exception?.localizedMessage ?: "গুগল ড্রাইভ থেকে রিস্টোর ফাইল আনা সম্ভব হয়নি।"
+              _isRestoring.value = false
+              onError(msg)
+              return@launch
+            }
+          } else {
+            // Local backup file fallback
+            val localTrips = GoogleDriveBackupManager.readTripsFromLatestBackup(context)
+            if (localTrips.isNotEmpty()) {
+              com.example.data.drive.RestoredDataPayload(trips = localTrips)
+            } else {
+              _isRestoring.value = false
+              onError("গুগল ড্রাইভে কানেক্ট করা যায়নি এবং কোনো ব্যাকআপ ফাইল পাওয়া যায়নি। / Drive account not connected & no backup found")
+              return@launch
+            }
+          }
         }
-        if (restoredTrips.isEmpty()) {
+
+        val restoredTrips = payload.trips
+        val restoredBookings = payload.bookings
+        val restoredProfile = payload.profile
+        val restoredDocs = payload.vehicleDocuments
+        val restoredMobil = payload.mobilServiceInfo
+
+        val totalRestoredItems = restoredTrips.size + restoredBookings.size
+
+        if (totalRestoredItems == 0 && restoredProfile == null && restoredDocs == null && restoredMobil == null) {
           _isRestoring.value = false
-          onError("No backup file found to restore")
+          onError("গুগল ড্রাইভের ব্যাকআপ ফাইলটিতে কোনো ডাটা পাওয়া যায়নি। / Backup file on Drive is empty or invalid")
           return@launch
         }
 
-        // Insert / restore trips
-        tripRepo.insertTrips(restoredTrips)
+        // Restore into DB & Preferences
+        if (restoredTrips.isNotEmpty()) {
+          tripRepo.insertTrips(restoredTrips)
+        }
+        if (restoredBookings.isNotEmpty()) {
+          bookingRepo.insertBookings(restoredBookings)
+        }
+        if (restoredProfile != null) {
+          userPrefsRepo.updateProfile(restoredProfile)
+        }
+        if (restoredDocs != null) {
+          userPrefsRepo.updateDocuments(restoredDocs)
+        }
+        if (restoredMobil != null) {
+          userPrefsRepo.updateMobilService(restoredMobil)
+        }
+
         val now = System.currentTimeMillis()
         userPrefsRepo.setLastDriveBackupTime(now)
-        userPrefsRepo.setLastBackupTripCount(restoredTrips.size)
+        userPrefsRepo.setLastBackupTripCount(totalRestoredItems)
         _lastBackupTime.value = now
-        _lastBackupCount.value = restoredTrips.size
+        _lastBackupCount.value = totalRestoredItems
 
-        _backupStatusMessage.value = "Restored ${restoredTrips.size} trips from Google Drive"
-        onSuccess(restoredTrips.size)
+        _backupStatusMessage.value = "গুগল ড্রাইভ থেকে $totalRestoredItems টি হিসাব ও সেটিংস রিস্টোর করা হয়েছে!"
+        onSuccess(totalRestoredItems)
       } catch (e: Exception) {
         onError(e.localizedMessage ?: "Restore failed")
       } finally {

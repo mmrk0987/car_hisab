@@ -118,6 +118,16 @@ dependencies {
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
+  implementation("com.google.android.gms:play-services-auth:21.3.0")
+  implementation("com.google.api-client:google-api-client-android:2.7.2") {
+    exclude(group = "org.apache.httpcomponents")
+  }
+  implementation("com.google.http-client:google-http-client-gson:1.43.3") {
+    exclude(group = "org.apache.httpcomponents")
+  }
+  implementation("com.google.apis:google-api-services-drive:v3-rev197-1.25.0") {
+    exclude(group = "org.apache.httpcomponents")
+  }
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)

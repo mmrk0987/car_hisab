@@ -14,6 +14,9 @@ interface BookingDao {
   @Query("SELECT * FROM bookings ORDER BY tripDateMillis ASC, id ASC")
   fun getAllBookings(): Flow<List<BookingEntity>>
 
+  @Query("SELECT * FROM bookings ORDER BY tripDateMillis ASC, id ASC")
+  suspend fun getAllBookingsSnapshot(): List<BookingEntity>
+
   @Query("SELECT * FROM bookings WHERE status != 'COMPLETED' AND status != 'CANCELLED' ORDER BY tripDateMillis ASC")
   fun getUpcomingBookings(): Flow<List<BookingEntity>>
 
