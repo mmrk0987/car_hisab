@@ -1,70 +1,52 @@
 package com.example.data.drive
 
 import android.content.Context
-import android.content.Intent
 import android.net.Uri
 import android.util.Base64
 import android.util.Log
-import androidx.core.content.FileProvider
+import com.example.data.model.BookingEntity
+import com.example.data.model.MobilServiceInfo
 import com.example.data.model.TripEntity
+import com.example.data.model.VehicleDocuments
 import com.example.data.repository.UserProfile
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-data class DriveBackupPayload(
+data class BackupDataPayload(
   val version: Int = 1,
   val timestamp: Long = System.currentTimeMillis(),
   val formattedDate: String = "",
   val appName: String = "Car Hisab",
-  val profile: UserProfile,
-  val totalTrips: Int,
-  val trips: List<TripEntity>
+  val profile: UserProfile? = null,
+  val documents: VehicleDocuments? = null,
+  val mobilService: MobilServiceInfo? = null,
+  val trips: List<TripEntity> = emptyList(),
+  val bookings: List<BookingEntity> = emptyList()
 )
 
 object GoogleDriveBackupManager {
 
   private const val TAG = "GoogleDriveBackup"
-  private const val BACKUP_DIR_NAME = "google_drive_backups"
   private const val SECRET_KEY = "CarHisabSecureDriveKey2026#X9"
 
   /**
-   * Encrypts plaintext JSON string using XOR cipher and Base64 encoding for secure Drive storage.
-   */
-  private fun encryptData(plainText: String): String {
-    return try {
-      val keyBytes = SECRET_KEY.toByteArray(Charsets.UTF_8)
-      val textBytes = plainText.toByteArray(Charsets.UTF_8)
-      val encryptedBytes = ByteArray(textBytes.size)
-      for (i in textBytes.indices) {
-        encryptedBytes[i] = (textBytes[i].toInt() xor keyBytes[i % keyBytes.size].toInt()).toByte()
-      }
-      // Add custom header "CARHISAB_SECURE_V1:" + Base64
-      val base64Encoded = Base64.encodeToString(encryptedBytes, Base64.DEFAULT)
-      "CARHISAB_SECURE_V1:$base64Encoded"
-    } catch (e: Exception) {
-      Log.e(TAG, "Encryption failed", e)
-      plainText
-    }
-  }
-
-  /**
-   * Decrypts secure encrypted payload back to plaintext JSON.
+   * Decrypts secure encrypted payload back to plaintext JSON if encrypted.
    */
   private fun decryptData(dataString: String): String {
     val trimmedData = dataString.trim()
     return try {
       if (!trimmedData.startsWith("CARHISAB_SECURE_V1:")) {
-        // Fallback for legacy unencrypted JSON backups
         return trimmedData
       }
       val base64Encoded = trimmedData.removePrefix("CARHISAB_SECURE_V1:").trim()
-      val encryptedBytes = Base64.decode(base64Encoded, Base64.DEFAULT)
+      val encryptedBytes = try {
+        Base64.decode(base64Encoded, Base64.DEFAULT)
+      } catch (_: Throwable) {
+        java.util.Base64.getDecoder().decode(base64Encoded)
+      }
       val keyBytes = SECRET_KEY.toByteArray(Charsets.UTF_8)
       val decryptedBytes = ByteArray(encryptedBytes.size)
       for (i in encryptedBytes.indices) {
@@ -78,11 +60,15 @@ object GoogleDriveBackupManager {
   }
 
   /**
-   * Serializes trips and profile metadata into a structured JSON backup string.
+   * Serializes trips, bookings, profile metadata, vehicle documents, and mobil service info
+   * into a formatted JSON backup string.
    */
   fun serializeBackupJson(
     trips: List<TripEntity>,
-    profile: UserProfile
+    profile: UserProfile,
+    documents: VehicleDocuments? = null,
+    mobilService: MobilServiceInfo? = null,
+    bookings: List<BookingEntity> = emptyList()
   ): String {
     val root = JSONObject()
     root.put("version", 1)
@@ -99,10 +85,47 @@ object GoogleDriveBackupManager {
       put("carModel", profile.carModel)
       put("carNumber", profile.carNumber)
       put("driverName", profile.driverName)
+      put("driverNameBangla", profile.driverNameBangla)
+      put("driverNameEnglish", profile.driverNameEnglish)
+      put("birthDate", profile.birthDate)
       put("driverPhone", profile.driverPhone)
       put("driverEmail", profile.driverEmail)
+      put("userUniqueKey", profile.userUniqueKey)
     }
     root.put("profile", profileObj)
+
+    // Vehicle Documents metadata
+    if (documents != null) {
+      val docObj = JSONObject().apply {
+        put("taxTokenExpiryMillis", documents.taxTokenExpiryMillis)
+        put("taxTokenNumber", documents.taxTokenNumber)
+        put("fitnessExpiryMillis", documents.fitnessExpiryMillis)
+        put("fitnessNumber", documents.fitnessNumber)
+        put("routePermitExpiryMillis", documents.routePermitExpiryMillis)
+        put("routePermitNumber", documents.routePermitNumber)
+        put("insuranceExpiryMillis", documents.insuranceExpiryMillis)
+        put("insuranceNumber", documents.insuranceNumber)
+        put("drivingLicenseExpiryMillis", documents.drivingLicenseExpiryMillis)
+        put("drivingLicenseNumber", documents.drivingLicenseNumber)
+      }
+      root.put("documents", docObj)
+    }
+
+    // Mobil Service metadata
+    if (mobilService != null) {
+      val mobObj = JSONObject().apply {
+        put("currentOdometerKm", mobilService.currentOdometerKm)
+        put("lastMobilChangeKm", mobilService.lastMobilChangeKm)
+        put("mobilChangeIntervalKm", mobilService.mobilChangeIntervalKm)
+        put("lastMobilChangeDateMillis", mobilService.lastMobilChangeDateMillis)
+        put("mobilBrandGrade", mobilService.mobilBrandGrade)
+        put("lastBrakeCheckKm", mobilService.lastBrakeCheckKm)
+        put("lastAirFilterKm", mobilService.lastAirFilterKm)
+        put("lastGearOilKm", mobilService.lastGearOilKm)
+        put("generalNotes", mobilService.generalNotes)
+      }
+      root.put("mobilService", mobObj)
+    }
 
     // Trips array
     val tripsArray = JSONArray()
@@ -127,141 +150,208 @@ object GoogleDriveBackupManager {
     root.put("tripsCount", trips.size)
     root.put("trips", tripsArray)
 
+    // Bookings array
+    val bookingsArray = JSONArray()
+    for (booking in bookings) {
+      val bObj = JSONObject().apply {
+        put("id", booking.id)
+        put("passengerName", booking.passengerName)
+        put("passengerPhone", booking.passengerPhone)
+        put("pickupLocation", booking.pickupLocation)
+        put("dropLocation", booking.dropLocation)
+        put("tripDateMillis", booking.tripDateMillis)
+        put("tripDateString", booking.tripDateString)
+        put("tripTimeString", booking.tripTimeString)
+        put("totalFare", booking.totalFare)
+        put("advancePaid", booking.advancePaid)
+        put("dueFare", booking.dueFare)
+        put("status", booking.status)
+        put("notes", booking.notes)
+      }
+      bookingsArray.put(bObj)
+    }
+    root.put("bookingsCount", bookings.size)
+    root.put("bookings", bookingsArray)
+
     return root.toString(2)
   }
 
   /**
-   * Parses a JSON string back into a list of TripEntities.
+   * Safely parses JSON string back into a BackupDataPayload data structure without crashing.
+   */
+  fun parseBackupPayload(jsonString: String): BackupDataPayload {
+    val decrypted = decryptData(jsonString)
+    val root = try {
+      JSONObject(decrypted)
+    } catch (e: Exception) {
+      Log.e(TAG, "Invalid JSON structure in backup file", e)
+      return BackupDataPayload()
+    }
+
+    val version = root.optInt("version", 1)
+    val timestamp = root.optLong("timestamp", System.currentTimeMillis())
+    val backupDate = root.optString("backupDate", "")
+
+    // Profile parsing
+    val profile = root.optJSONObject("profile")?.let { pObj ->
+      UserProfile(
+        carName = pObj.optString("carName", ""),
+        carModel = pObj.optString("carModel", ""),
+        carNumber = pObj.optString("carNumber", ""),
+        driverName = pObj.optString("driverName", ""),
+        driverNameBangla = pObj.optString("driverNameBangla", ""),
+        driverNameEnglish = pObj.optString("driverNameEnglish", ""),
+        birthDate = pObj.optString("birthDate", ""),
+        driverPhone = pObj.optString("driverPhone", ""),
+        driverEmail = pObj.optString("driverEmail", ""),
+        userUniqueKey = pObj.optString("userUniqueKey", "CH-84920")
+      )
+    }
+
+    // Documents parsing
+    val documents = root.optJSONObject("documents")?.let { dObj ->
+      VehicleDocuments(
+        taxTokenExpiryMillis = dObj.optLong("taxTokenExpiryMillis", 0L),
+        taxTokenNumber = dObj.optString("taxTokenNumber", ""),
+        fitnessExpiryMillis = dObj.optLong("fitnessExpiryMillis", 0L),
+        fitnessNumber = dObj.optString("fitnessNumber", ""),
+        routePermitExpiryMillis = dObj.optLong("routePermitExpiryMillis", 0L),
+        routePermitNumber = dObj.optString("routePermitNumber", ""),
+        insuranceExpiryMillis = dObj.optLong("insuranceExpiryMillis", 0L),
+        insuranceNumber = dObj.optString("insuranceNumber", ""),
+        drivingLicenseExpiryMillis = dObj.optLong("drivingLicenseExpiryMillis", 0L),
+        drivingLicenseNumber = dObj.optString("drivingLicenseNumber", "")
+      )
+    }
+
+    // Mobil service parsing
+    val mobilService = root.optJSONObject("mobilService")?.let { mObj ->
+      MobilServiceInfo(
+        currentOdometerKm = mObj.optDouble("currentOdometerKm", 0.0),
+        lastMobilChangeKm = mObj.optDouble("lastMobilChangeKm", 0.0),
+        mobilChangeIntervalKm = mObj.optDouble("mobilChangeIntervalKm", 3000.0),
+        lastMobilChangeDateMillis = mObj.optLong("lastMobilChangeDateMillis", System.currentTimeMillis()),
+        mobilBrandGrade = mObj.optString("mobilBrandGrade", ""),
+        lastBrakeCheckKm = mObj.optDouble("lastBrakeCheckKm", 0.0),
+        lastAirFilterKm = mObj.optDouble("lastAirFilterKm", 0.0),
+        lastGearOilKm = mObj.optDouble("lastGearOilKm", 0.0),
+        generalNotes = mObj.optString("generalNotes", "")
+      )
+    }
+
+    // Trips parsing
+    val tripsList = mutableListOf<TripEntity>()
+    val tripsArray = root.optJSONArray("trips")
+    if (tripsArray != null) {
+      for (i in 0 until tripsArray.length()) {
+        try {
+          val tObj = tripsArray.getJSONObject(i)
+          val trip = TripEntity(
+            id = tObj.optLong("id", 0L),
+            dateMillis = tObj.optLong("dateMillis", System.currentTimeMillis()),
+            dateString = tObj.optString("dateString", ""),
+            place = tObj.optString("place", ""),
+            rent = tObj.optDouble("rent", 0.0),
+            gratuity = tObj.optDouble("gratuity", 0.0),
+            maintenanceCost = tObj.optDouble("maintenanceCost", 0.0),
+            kmDriven = tObj.optDouble("kmDriven", 0.0),
+            description = tObj.optString("description", ""),
+            passengerName = tObj.optString("passengerName", ""),
+            passengerPhone = tObj.optString("passengerPhone", ""),
+            income = tObj.optDouble("income", 0.0),
+            profit = tObj.optDouble("profit", 0.0)
+          )
+          tripsList.add(trip)
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed parsing trip at index $i", e)
+        }
+      }
+    }
+
+    // Bookings parsing
+    val bookingsList = mutableListOf<BookingEntity>()
+    val bookingsArray = root.optJSONArray("bookings")
+    if (bookingsArray != null) {
+      for (i in 0 until bookingsArray.length()) {
+        try {
+          val bObj = bookingsArray.getJSONObject(i)
+          val booking = BookingEntity(
+            id = bObj.optLong("id", 0L),
+            passengerName = bObj.optString("passengerName", ""),
+            passengerPhone = bObj.optString("passengerPhone", ""),
+            pickupLocation = bObj.optString("pickupLocation", ""),
+            dropLocation = bObj.optString("dropLocation", ""),
+            tripDateMillis = bObj.optLong("tripDateMillis", System.currentTimeMillis()),
+            tripDateString = bObj.optString("tripDateString", ""),
+            tripTimeString = bObj.optString("tripTimeString", ""),
+            totalFare = bObj.optDouble("totalFare", 0.0),
+            advancePaid = bObj.optDouble("advancePaid", 0.0),
+            dueFare = bObj.optDouble("dueFare", 0.0),
+            status = bObj.optString("status", "CONFIRMED"),
+            notes = bObj.optString("notes", "")
+          )
+          bookingsList.add(booking)
+        } catch (e: Exception) {
+          Log.e(TAG, "Failed parsing booking at index $i", e)
+        }
+      }
+    }
+
+    return BackupDataPayload(
+      version = version,
+      timestamp = timestamp,
+      formattedDate = backupDate,
+      appName = root.optString("app", "CarHisab"),
+      profile = profile,
+      documents = documents,
+      mobilService = mobilService,
+      trips = tripsList,
+      bookings = bookingsList
+    )
+  }
+
+  /**
+   * Helper function for legacy callers parsing json string to Trip list.
    */
   fun parseBackupJson(jsonString: String): List<TripEntity> {
-    val root = JSONObject(jsonString)
-    val tripsArray = root.optJSONArray("trips") ?: return emptyList()
-
-    val list = mutableListOf<TripEntity>()
-    for (i in 0 until tripsArray.length()) {
-      val tObj = tripsArray.getJSONObject(i)
-      val trip = TripEntity(
-        id = tObj.optLong("id", 0L),
-        dateMillis = tObj.optLong("dateMillis", System.currentTimeMillis()),
-        dateString = tObj.optString("dateString", ""),
-        place = tObj.optString("place", ""),
-        rent = tObj.optDouble("rent", 0.0),
-        gratuity = tObj.optDouble("gratuity", 0.0),
-        maintenanceCost = tObj.optDouble("maintenanceCost", 0.0),
-        kmDriven = tObj.optDouble("kmDriven", 0.0),
-        description = tObj.optString("description", ""),
-        passengerName = tObj.optString("passengerName", ""),
-        passengerPhone = tObj.optString("passengerPhone", ""),
-        income = tObj.optDouble("income", 0.0),
-        profit = tObj.optDouble("profit", 0.0)
-      )
-      list.add(trip)
-    }
-    return list
+    return parseBackupPayload(jsonString).trips
   }
 
   /**
-   * Generates a local backup file on disk inside internal cache (ENCRYPTED).
+   * Writes backup JSON string to an SAF Uri stream.
    */
-  fun createLocalBackupFile(
-    context: Context,
-    trips: List<TripEntity>,
-    profile: UserProfile
-  ): File {
-    val dir = File(context.cacheDir, BACKUP_DIR_NAME).apply { mkdirs() }
-    val dateStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-    // Use .enc extension to denote encrypted secure file
-    val file = File(dir, "CarHisab_SecureBackup_$dateStamp.carhisab.enc")
-
-    val json = serializeBackupJson(trips, profile)
-    val encryptedJson = encryptData(json)
-
-    FileOutputStream(file).use { out ->
-      out.write(encryptedJson.toByteArray(Charsets.UTF_8))
-      out.flush()
-    }
-
-    // Also update a standard latest secure copy
-    val latestFile = File(dir, "CarHisab_Latest_SecureBackup.enc")
-    FileOutputStream(latestFile).use { out ->
-      out.write(encryptedJson.toByteArray(Charsets.UTF_8))
-      out.flush()
-    }
-
-    return file
-  }
-
-  /**
-   * Checks if a local backup file exists for instant restore.
-   */
-  fun getLatestLocalBackupFile(context: Context): File? {
-    val dir = File(context.cacheDir, BACKUP_DIR_NAME)
-    if (!dir.exists()) return null
-    val latestFile = File(dir, "CarHisab_Latest_SecureBackup.enc")
-    if (latestFile.exists() && latestFile.length() > 0) return latestFile
-    val legacyLatest = File(dir, "CarHisab_Latest_Backup.json")
-    if (legacyLatest.exists() && legacyLatest.length() > 0) return legacyLatest
-    return dir.listFiles { f -> f.extension == "enc" || f.extension == "json" }?.maxByOrNull { it.lastModified() }
-  }
-
-  /**
-   * Restores trips from the latest local backup file (DECRYPTED).
-   */
-  fun readTripsFromLatestBackup(context: Context): List<TripEntity> {
-    val file = getLatestLocalBackupFile(context) ?: return emptyList()
+  fun writeBackupToUri(context: Context, uri: Uri, jsonContent: String): Boolean {
     return try {
-      val rawContent = FileInputStream(file).bufferedReader(Charsets.UTF_8).use { it.readText() }
-      val decryptedJson = decryptData(rawContent)
-      parseBackupJson(decryptedJson)
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed reading/decrypting backup file", e)
-      emptyList()
-    }
-  }
-
-  /**
-   * Opens Android system share sheet with Google Drive target enabled,
-   * allowing users to save encrypted backup directly to their Google Drive account.
-   */
-  fun openDriveSaveIntent(
-    context: Context,
-    backupFile: File
-  ) {
-    try {
-      val uri: Uri = FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        backupFile
-      )
-
-      val intent = Intent(Intent.ACTION_SEND).apply {
-        type = "application/octet-stream"
-        putExtra(Intent.EXTRA_STREAM, uri)
-        putExtra(Intent.EXTRA_SUBJECT, "Car Hisab Secure Encrypted Drive Backup")
-        putExtra(Intent.EXTRA_TEXT, "Car Hisab Secure Encrypted Cloud Backup - ${backupFile.name} (Military Grade AES Encrypted)")
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+      context.contentResolver.openOutputStream(uri, "w")?.use { out ->
+        out.write(jsonContent.toByteArray(Charsets.UTF_8))
+        out.flush()
       }
-
-      val chooser = Intent.createChooser(intent, "Save Secure Backup to Google Drive / ড্রাইভে সেভ করুন")
-      chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      context.startActivity(chooser)
+      true
     } catch (e: Exception) {
-      Log.e(TAG, "Error initiating Google Drive share intent", e)
+      Log.e(TAG, "Failed writing backup to SAF URI", e)
+      false
     }
   }
 
   /**
-   * Restores trips from a specific file Uri (e.g. chosen from Storage Access Framework).
+   * Reads backup JSON string from an SAF Uri stream.
+   */
+  fun readBackupFromUri(context: Context, uri: Uri): String? {
+    return try {
+      context.contentResolver.openInputStream(uri)?.use { inputStream ->
+        inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed reading backup from SAF URI", e)
+      null
+    }
+  }
+
+  /**
+   * Restores trips from a specific file Uri (chosen from Storage Access Framework).
    */
   fun readTripsFromUri(context: Context, uri: Uri): List<TripEntity> {
-    return try {
-      val rawContent = context.contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: return emptyList()
-      val decryptedJson = decryptData(rawContent)
-      parseBackupJson(decryptedJson)
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed reading/decrypting backup file from Uri", e)
-      emptyList()
-    }
+    val content = readBackupFromUri(context, uri) ?: return emptyList()
+    return parseBackupJson(content)
   }
 }

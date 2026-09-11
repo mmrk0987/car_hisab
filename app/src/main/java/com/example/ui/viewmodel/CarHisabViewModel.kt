@@ -274,17 +274,12 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     val current = userProfile.value
     val now = System.currentTimeMillis()
 
-    // Supported Active Packages & Codes:
-    // 1 Month (30 days): CH-30-M100, MMRK-MONTH-100, PROMO-30
-    // 6 Months (180 days): CH-180-H500, MMRK-HALF-500, PROMO-180
-    // 1 Year (365 days): CH-365-Y950, MMRK-YEAR-950, MMRK-ADMIN-VIP, PROMO-365
-    // Dynamic day codes: CH-{DAYS}-KEY (e.g., CH-60-VIP, CH-90-VIP)
     val (durationDays, planTitle) = when {
       cleanKey == "CH-30-M100" || cleanKey == "MMRK-MONTH-100" || cleanKey == "PROMO-30" || cleanKey == "MONTH100" -> {
         Pair(30, "১ মাসের রেগুলার প্ল্যান (৳১০০)")
       }
       cleanKey == "CH-180-H500" || cleanKey == "MMRK-HALF-500" || cleanKey == "PROMO-180" || cleanKey == "HALF500" -> {
-        Pair(180, "৬ মাসের হাফ-ইয়ারলি প্ল্যান (৳৫০০)")
+        Pair(180, "৬ মাসের হাফ-ইয়ারলি প্ল্যান (৳৫০) ")
       }
       cleanKey == "CH-365-Y950" || cleanKey == "MMRK-YEAR-950" || cleanKey == "MMRK-ADMIN-VIP" || cleanKey == "PROMO-365" || cleanKey == "YEAR950" -> {
         Pair(365, "১ বছরের মেগা সেভার প্ল্যান (৳৯৫০)")
@@ -396,10 +391,8 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     onCompleted: () -> Unit = {}
   ) {
     viewModelScope.launch {
-      // 1. Mark booking as COMPLETED
       bookingRepo.updateBooking(booking.copy(status = "COMPLETED"))
 
-      // 2. Insert into trips table
       val rent = booking.totalFare
       val income = rent - gratuity
       val profit = income - maintenanceCost
@@ -417,7 +410,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       )
       tripRepo.insertTrip(trip)
 
-      // 3. Update odometer if kmDriven > 0
       if (kmDriven > 0) {
         val currentService = mobilServiceInfo.value
         userPrefsRepo.updateMobilService(
@@ -448,7 +440,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     )
     userPrefsRepo.updateMobilService(updated)
 
-    // Also auto add a maintenance expense trip log if cost > 0
     if (cost > 0) {
       viewModelScope.launch {
         val trip = TripEntity(
@@ -785,9 +776,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   private val _passengerPhoneInput = MutableStateFlow("")
   val passengerPhoneInput: StateFlow<String> = _passengerPhoneInput.asStateFlow()
 
-  // Real-time calculations:
-  // Income = Rent - Gratuity
-  // Profit = Income - Maintenance Cost
   val calculatedIncome: StateFlow<Double> = combine(
     _rentInput,
     _gratuityInput
@@ -874,7 +862,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
 
     viewModelScope.launch {
       tripRepo.insertTrip(newTrip)
-      // Reset form
       _tripPlace.value = ""
       _rentInput.value = ""
       _gratuityInput.value = ""
@@ -952,7 +939,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
-  // Google Drive Cloud Backup & Restore
+  // Storage Access Framework (SAF) Backup & Restore
   val isAutoWeeklyBackupReminderEnabled: StateFlow<Boolean> = userPrefsRepo.autoWeeklyBackupReminderFlow
 
   fun setAutoWeeklyBackupReminderEnabled(context: Context, enabled: Boolean) {
@@ -983,8 +970,9 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     _backupStatusMessage.value = null
   }
 
-  fun performGoogleDriveBackup(
+  fun performBackupToUri(
     context: Context,
+    uri: Uri,
     onSuccess: (count: Int) -> Unit,
     onError: (String) -> Unit
   ) {
@@ -992,30 +980,97 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       _isBackingUp.value = true
       try {
         val trips = tripRepo.getAllTripsSnapshot()
-        if (trips.isEmpty()) {
-          _isBackingUp.value = false
-          onError("No trips to back up")
-          return@launch
-        }
+        val bookings = bookingRepo.getAllBookingsSnapshot()
         val profile = userProfile.value
-        val backupFile = GoogleDriveBackupManager.createLocalBackupFile(context, trips, profile)
-        
-        val now = System.currentTimeMillis()
-        userPrefsRepo.setLastDriveBackupTime(now)
-        userPrefsRepo.setLastBackupTripCount(trips.size)
-        _lastBackupTime.value = now
-        _lastBackupCount.value = trips.size
+        val documents = vehicleDocuments.value
+        val mobilService = mobilServiceInfo.value
 
-        // Launch Drive Share / Upload Picker
-        GoogleDriveBackupManager.openDriveSaveIntent(context, backupFile)
-        
-        _backupStatusMessage.value = "Backup created: ${trips.size} trips"
-        onSuccess(trips.size)
+        val jsonString = GoogleDriveBackupManager.serializeBackupJson(
+          trips = trips,
+          profile = profile,
+          documents = documents,
+          mobilService = mobilService,
+          bookings = bookings
+        )
+
+        val success = GoogleDriveBackupManager.writeBackupToUri(context, uri, jsonString)
+        if (success) {
+          val now = System.currentTimeMillis()
+          userPrefsRepo.setLastDriveBackupTime(now)
+          userPrefsRepo.setLastBackupTripCount(trips.size)
+          _lastBackupTime.value = now
+          _lastBackupCount.value = trips.size
+          _backupStatusMessage.value = "Backup created: ${trips.size} trips"
+          onSuccess(trips.size)
+        } else {
+          onError("Failed writing backup file to storage")
+        }
       } catch (e: Exception) {
         onError(e.localizedMessage ?: "Backup failed")
       } finally {
         _isBackingUp.value = false
       }
+    }
+  }
+
+  fun performRestoreFromUri(
+    context: Context,
+    uri: Uri,
+    onSuccess: (count: Int) -> Unit,
+    onError: (String) -> Unit
+  ) {
+    viewModelScope.launch {
+      _isRestoring.value = true
+      try {
+        val rawContent = GoogleDriveBackupManager.readBackupFromUri(context, uri)
+        if (rawContent.isNullOrBlank()) {
+          _isRestoring.value = false
+          onError("Could not read backup file content")
+          return@launch
+        }
+
+        val payload = GoogleDriveBackupManager.parseBackupPayload(rawContent)
+        if (payload.trips.isEmpty() && payload.bookings.isEmpty() && payload.profile == null) {
+          _isRestoring.value = false
+          onError("Invalid backup file or no data found")
+          return@launch
+        }
+
+        if (payload.trips.isNotEmpty()) {
+          tripRepo.insertTrips(payload.trips)
+        }
+        if (payload.bookings.isNotEmpty()) {
+          bookingRepo.insertBookings(payload.bookings)
+        }
+        payload.profile?.let { userPrefsRepo.updateProfile(it) }
+        payload.documents?.let { userPrefsRepo.updateDocuments(it) }
+        payload.mobilService?.let { userPrefsRepo.updateMobilService(it) }
+
+        val count = payload.trips.size
+        val now = System.currentTimeMillis()
+        userPrefsRepo.setLastDriveBackupTime(now)
+        userPrefsRepo.setLastBackupTripCount(count)
+        _lastBackupTime.value = now
+        _lastBackupCount.value = count
+
+        _backupStatusMessage.value = "Restored $count trips successfully"
+        onSuccess(count)
+      } catch (e: Exception) {
+        onError(e.localizedMessage ?: "Restore failed")
+      } finally {
+        _isRestoring.value = false
+      }
+    }
+  }
+
+  fun performGoogleDriveBackup(
+    context: Context,
+    onSuccess: (count: Int) -> Unit,
+    onError: (String) -> Unit
+  ) {
+    viewModelScope.launch {
+      _backupStatusMessage.value = "Use Storage Access Framework to select backup location"
+      onError("Select a location to save backup file")
     }
   }
 
@@ -1025,35 +1080,10 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     onSuccess: (count: Int) -> Unit,
     onError: (String) -> Unit
   ) {
-    viewModelScope.launch {
-      _isRestoring.value = true
-      try {
-        val restoredTrips = if (uri != null) {
-          GoogleDriveBackupManager.readTripsFromUri(context, uri)
-        } else {
-          GoogleDriveBackupManager.readTripsFromLatestBackup(context)
-        }
-        if (restoredTrips.isEmpty()) {
-          _isRestoring.value = false
-          onError("No backup file found to restore")
-          return@launch
-        }
-
-        // Insert / restore trips
-        tripRepo.insertTrips(restoredTrips)
-        val now = System.currentTimeMillis()
-        userPrefsRepo.setLastDriveBackupTime(now)
-        userPrefsRepo.setLastBackupTripCount(restoredTrips.size)
-        _lastBackupTime.value = now
-        _lastBackupCount.value = restoredTrips.size
-
-        _backupStatusMessage.value = "Restored ${restoredTrips.size} trips from Google Drive"
-        onSuccess(restoredTrips.size)
-      } catch (e: Exception) {
-        onError(e.localizedMessage ?: "Restore failed")
-      } finally {
-        _isRestoring.value = false
-      }
+    if (uri != null) {
+      performRestoreFromUri(context, uri, onSuccess, onError)
+    } else {
+      onError("No backup file selected")
     }
   }
 }

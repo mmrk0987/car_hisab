@@ -8,6 +8,8 @@ class BookingRepository(private val bookingDao: BookingDao) {
   val allBookings: Flow<List<BookingEntity>> = bookingDao.getAllBookings()
   val upcomingBookings: Flow<List<BookingEntity>> = bookingDao.getUpcomingBookings()
 
+  suspend fun getAllBookingsSnapshot(): List<BookingEntity> = bookingDao.getAllBookingsSnapshot()
+
   suspend fun insertBooking(booking: BookingEntity): Long = bookingDao.insertBooking(booking)
 
   suspend fun insertBookings(bookings: List<BookingEntity>): List<Long> =

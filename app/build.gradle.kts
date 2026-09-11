@@ -56,7 +56,15 @@ android {
     compose = true
     buildConfig = true
   }
-  testOptions { unitTests { isIncludeAndroidResources = true } }
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        it.systemProperty("robolectric.dependency.repo.id", "aliyun")
+        it.systemProperty("robolectric.dependency.repo.url", "https://maven.aliyun.com/repository/public")
+      }
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true

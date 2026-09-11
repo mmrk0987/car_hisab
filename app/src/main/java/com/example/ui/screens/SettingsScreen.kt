@@ -144,6 +144,8 @@ fun SettingsScreen(
   isBackingUp: Boolean = false,
   isRestoring: Boolean = false,
   backupStatusMessage: String? = null,
+  onBackupToUri: (Uri) -> Unit = {},
+  onRestoreFromUri: (Uri) -> Unit = {},
   onGoogleDriveBackup: () -> Unit = {},
   onGoogleDriveRestore: (Uri?) -> Unit = {},
   onLogout: () -> Unit = {}
@@ -157,11 +159,11 @@ fun SettingsScreen(
   var generatedResultKey by remember { mutableStateOf("") }
   
   var showRestoreConfirmDialog by remember { mutableStateOf(false) }
-  val filePickerLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.GetContent()
+  val openDocumentLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocument()
   ) { uri: Uri? ->
     if (uri != null) {
-      onGoogleDriveRestore(uri)
+      onRestoreFromUri(uri)
     }
   }
   val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -421,7 +423,7 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Card 2: THEME PREFERENCE (DEDICATED INTERFACE)
+      // Card 2: THEME PREFERENCE
       Card(
         modifier = Modifier
           .fillMaxWidth()
@@ -577,7 +579,7 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Card 4: ACCOUNTING EXPORT (PDF & CSV)
+      // Card 4: ACCOUNTING EXPORT
       Card(
         modifier = Modifier
           .fillMaxWidth()
@@ -705,7 +707,7 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Card 6: GOOGLE DRIVE CLOUD BACKUP (DEDICATED INTERFACE)
+      // Card 6: GOOGLE DRIVE CLOUD BACKUP
       Card(
         modifier = Modifier
           .fillMaxWidth()
@@ -893,7 +895,7 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(30.dp))
 
-      // Footer - Information/Branding badge (Distinct from action cards)
+      // Footer - Information/Branding badge
       Column(
         modifier = Modifier
           .fillMaxWidth()
@@ -944,7 +946,7 @@ fun SettingsScreen(
         )
       }
 
-      // Admin Key Generator Dialog (7 Taps on Version)
+      // Admin Key Generator Dialog
       if (showAdminGeneratorDialog) {
         var adminPasswordInput by remember { mutableStateOf("") }
         var isAdminAuthenticated by remember { mutableStateOf(false) }
@@ -1127,7 +1129,6 @@ fun SettingsScreen(
         },
         text = {
           Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-            // Photo Selection & Preview at top of Dialog
             Row(
               modifier = Modifier
                 .fillMaxWidth()
@@ -1174,7 +1175,6 @@ fun SettingsScreen(
                   }
                 }
 
-                // Camera badge overlay
                 Box(
                   modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1413,7 +1413,7 @@ fun SettingsScreen(
           Button(
             onClick = {
               showRestoreConfirmDialog = false
-              filePickerLauncher.launch("*/*")
+              openDocumentLauncher.launch(arrayOf("application/json", "*/*"))
             },
             colors = ButtonDefaults.buttonColors(containerColor = accentColor),
             shape = RoundedCornerShape(10.dp)
@@ -1474,7 +1474,6 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Provider Selection
             Text(
               text = if (language == AppLanguage.BANGLA) "ইমেইল সার্ভিস প্রোভাইডার:" else "Email Service Provider:",
               fontSize = 12.5.sp,
@@ -1499,7 +1498,6 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // API Key Field
             Text(
               text = if (selectedOtpProvider.equals("BREVO", true)) "Brevo API Key (xkeysib-...):" else "Resend API Key (re_...):",
               fontSize = 12.sp,
@@ -1520,7 +1518,6 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Sender email field
             Text(
               text = if (language == AppLanguage.BANGLA) "প্রেরকের নাম ও ইমেইল (Sender Email):" else "Sender Name & Email:",
               fontSize = 12.sp,
@@ -1556,7 +1553,6 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Test OTP Dispatch Button
             val testTarget = profile.driverEmail.ifBlank { "mdmahfuj0987@gmail.com" }
             OutlinedButton(
               onClick = {
