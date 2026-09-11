@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -72,9 +75,6 @@ import com.example.ui.theme.DarkGreenSurface
 import com.example.ui.theme.MintGreenAccent
 import com.example.ui.theme.ProfitGreen
 import java.text.SimpleDateFormat
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import java.util.Date
 import java.util.Locale
 
@@ -90,17 +90,27 @@ fun DriveBackupScreen(
   backupStatusMessage: String?,
   isWeeklyReminderEnabled: Boolean = true,
   onToggleWeeklyReminder: (Boolean) -> Unit = {},
-  onGoogleDriveBackup: () -> Unit,
-  onGoogleDriveRestore: (Uri?) -> Unit,
+  onBackupToUri: (Uri) -> Unit = {},
+  onRestoreFromUri: (Uri) -> Unit = {},
+  onGoogleDriveBackup: () -> Unit = {},
+  onGoogleDriveRestore: (Uri?) -> Unit = {},
   onBack: () -> Unit
 ) {
   var showRestoreConfirmDialog by remember { mutableStateOf(false) }
 
-  val filePickerLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.GetContent()
+  val createDocumentLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.CreateDocument("application/json")
   ) { uri: Uri? ->
     if (uri != null) {
-      onGoogleDriveRestore(uri)
+      onBackupToUri(uri)
+    }
+  }
+
+  val openDocumentLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocument()
+  ) { uri: Uri? ->
+    if (uri != null) {
+      onRestoreFromUri(uri)
     }
   }
 
@@ -474,7 +484,10 @@ fun DriveBackupScreen(
 
           // Backup Now
           Button(
-            onClick = { onGoogleDriveBackup() },
+            onClick = {
+              val dateStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+              createDocumentLauncher.launch("CarHisab_Backup_$dateStamp.json")
+            },
             enabled = !isBackingUp && !isRestoring,
             modifier = Modifier
               .fillMaxWidth()
@@ -614,7 +627,7 @@ fun DriveBackupScreen(
           Button(
             onClick = {
               showRestoreConfirmDialog = false
-              filePickerLauncher.launch("*/*")
+              openDocumentLauncher.launch(arrayOf("application/json", "*/*"))
             },
             colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
           ) {

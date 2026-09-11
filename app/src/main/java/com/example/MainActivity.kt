@@ -150,14 +150,14 @@ class MainActivity : FragmentActivity() {
                       text = when (currentScreen) {
                         AppScreen.ALL_TRIPS -> when (language) {
                           AppLanguage.BANGLA -> "সব ট্রিপ ফোল্ডার"
-                          AppLanguage.HINDI -> "सभी ट्रিপ फ़ोल्डर"
+                          AppLanguage.HINDI -> "सभी ट्रिप फ़ोल्डर"
                           AppLanguage.TAMIL -> "அனைத்து பயணங்கள்"
                           AppLanguage.URDU -> "تمام ٹرپس"
                           else -> "All Trips Folder"
                         }
                         AppScreen.ADD_TRIP -> when (language) {
                           AppLanguage.BANGLA -> "নতুন ট্রিপ যোগ"
-                          AppLanguage.HINDI -> "नया ट्रিপ जोड़ें"
+                          AppLanguage.HINDI -> "नया ট্রিপ जोड़ें"
                           AppLanguage.TAMIL -> "புதிய பயணம் சேர்க்க"
                           AppLanguage.URDU -> "نیا ٹرپ شامل کریں"
                           else -> "Add New Trip"
@@ -171,7 +171,7 @@ class MainActivity : FragmentActivity() {
                         }
                         AppScreen.DOCUMENTS_SERVICES -> when (language) {
                           AppLanguage.BANGLA -> "কাগজপত্র ও সার্ভিস"
-                          AppLanguage.HINDI -> "दस्तावेज़ और सेवा"
+                          AppLanguage.HINDI -> "দস্তাবেজ এবং সেবা"
                           AppLanguage.TAMIL -> "ஆவணங்கள் & சேவை"
                           AppLanguage.URDU -> "دستاویزات اور سروس"
                           else -> "Documents & Service"
@@ -262,7 +262,7 @@ class MainActivity : FragmentActivity() {
                   modifier = Modifier.testTag("nav_item_add_trip")
                 )
 
-                // 3. All Trip ফোল্ডার (All Trips Folder - পরিবর্তিত নতুন আইকন)
+                // 3. All Trip ফোল্ডার
                 NavigationBarItem(
                   selected = currentScreen == AppScreen.ALL_TRIPS,
                   onClick = { viewModel.navigateTo(AppScreen.ALL_TRIPS) },
@@ -271,7 +271,7 @@ class MainActivity : FragmentActivity() {
                     Text(
                       text = when (language) {
                         AppLanguage.BANGLA -> "All Trip ফোল্ডার"
-                        AppLanguage.HINDI -> "सभी ट्रিপ फ़ोल्डर"
+                        AppLanguage.HINDI -> "सभी ट्रिप फ़ोल्डर"
                         AppLanguage.TAMIL -> "பயணங்கள்"
                         AppLanguage.URDU -> "تمام ٹرپس"
                         else -> "All Trips"
@@ -283,7 +283,7 @@ class MainActivity : FragmentActivity() {
                   modifier = Modifier.testTag("nav_item_all_trips")
                 )
 
-                // 4. সেটিংস (Settings - ছোট আইকন আকারে ডানপাশে)
+                // 4. সেটিংস (Settings)
                 NavigationBarItem(
                   selected = currentScreen == AppScreen.SETTINGS,
                   onClick = { viewModel.navigateTo(AppScreen.SETTINGS) },
@@ -713,6 +713,30 @@ class MainActivity : FragmentActivity() {
                       }
                     )
                   },
+                  onBackupToUri = { uri ->
+                    viewModel.performBackupToUri(
+                      context = context,
+                      uri = uri,
+                      onSuccess = { count ->
+                        Toast.makeText(context, AppStrings.backupSuccess(language, count), Toast.LENGTH_LONG).show()
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
+                  },
+                  onRestoreFromUri = { uri ->
+                    viewModel.performRestoreFromUri(
+                      context = context,
+                      uri = uri,
+                      onSuccess = { count ->
+                        Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
+                  },
                   onGoogleDriveBackup = {
                     viewModel.performGoogleDriveBackup(
                       context = context,
@@ -798,6 +822,30 @@ class MainActivity : FragmentActivity() {
                       },
                       Toast.LENGTH_SHORT
                     ).show()
+                  },
+                  onBackupToUri = { uri ->
+                    viewModel.performBackupToUri(
+                      context = context,
+                      uri = uri,
+                      onSuccess = { count ->
+                        Toast.makeText(context, AppStrings.backupSuccess(language, count), Toast.LENGTH_LONG).show()
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
+                  },
+                  onRestoreFromUri = { uri ->
+                    viewModel.performRestoreFromUri(
+                      context = context,
+                      uri = uri,
+                      onSuccess = { count ->
+                        Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
                   },
                   onGoogleDriveBackup = {
                     viewModel.performGoogleDriveBackup(
