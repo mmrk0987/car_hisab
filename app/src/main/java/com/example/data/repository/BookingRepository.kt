@@ -19,6 +19,8 @@ class BookingRepository(private val bookingDao: BookingDao) {
 
   suspend fun deleteBookingById(id: Long) = bookingDao.deleteBookingById(id)
 
+  suspend fun deleteAllBookings() = bookingDao.deleteAllBookings()
+
   suspend fun deleteBooking(booking: BookingEntity) = bookingDao.deleteBooking(booking)
 
   suspend fun getBookingCount(): Int = bookingDao.getBookingCount()

@@ -31,6 +31,10 @@ class TripRepository(private val tripDao: TripDao) {
     tripDao.deleteTripById(id)
   }
 
+  suspend fun deleteAllTrips() {
+    tripDao.deleteAllTrips()
+  }
+
   suspend fun getTripCount(): Int {
     return tripDao.getTripCount()
   }
