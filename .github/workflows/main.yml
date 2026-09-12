@@ -39,6 +39,9 @@ jobs:
         cp ~/.android/debug.keystore ./debug.keystore
 
     - name: Build Debug APK
+      env:
+        SUPABASE_URL: ${{ https://vuncvrkrjrqrmwusumdb.supabase.co/rest/v1/ }}
+        SUPABASE_ANON_KEY: ${{ sb_publishable_uVfiX9pfEWjLEdJESpLizA_JSvb1OIM }}
       run: ./gradlew assembleDebug
 
     - name: Upload APK Artifact
