@@ -108,6 +108,19 @@ object GoogleDriveBackupManager {
       put("driverPhone", profile.driverPhone)
       put("driverEmail", profile.driverEmail)
       put("userUniqueKey", profile.userUniqueKey)
+      put("profileImageUri", profile.profileImageUri ?: "")
+      put("rememberEmail", profile.rememberEmail)
+      put("savedEmail", profile.savedEmail)
+      put("nidFrontAttached", profile.nidFrontAttached)
+      put("nidBackAttached", profile.nidBackAttached)
+      put("selfieAttached", profile.selfieAttached)
+      put("isProfileCompleted", profile.isProfileCompleted)
+      put("isLoggedIn", profile.isLoggedIn)
+      put("isFreeTrialActive", profile.isFreeTrialActive)
+      put("trialMonthsRemaining", profile.trialMonthsRemaining)
+      put("registrationDateMillis", profile.registrationDateMillis)
+      put("subscriptionExpiryMillis", profile.subscriptionExpiryMillis)
+      put("currentPlanName", profile.currentPlanName)
     }
     root.put("profile", profileObj)
 
@@ -184,6 +197,7 @@ object GoogleDriveBackupManager {
         put("dueFare", booking.dueFare)
         put("status", booking.status)
         put("notes", booking.notes)
+        put("createdAtMillis", booking.createdAtMillis)
       }
       bookingsArray.put(bObj)
     }
@@ -221,7 +235,20 @@ object GoogleDriveBackupManager {
         birthDate = pObj.optString("birthDate", ""),
         driverPhone = pObj.optString("driverPhone", ""),
         driverEmail = pObj.optString("driverEmail", ""),
-        userUniqueKey = pObj.optString("userUniqueKey", "CH-84920")
+        userUniqueKey = pObj.optString("userUniqueKey", "CH-84920"),
+        profileImageUri = pObj.optString("profileImageUri").takeIf { !it.isNullOrBlank() },
+        rememberEmail = pObj.optBoolean("rememberEmail", false),
+        savedEmail = pObj.optString("savedEmail", ""),
+        nidFrontAttached = pObj.optBoolean("nidFrontAttached", false),
+        nidBackAttached = pObj.optBoolean("nidBackAttached", false),
+        selfieAttached = pObj.optBoolean("selfieAttached", false),
+        isProfileCompleted = pObj.optBoolean("isProfileCompleted", false),
+        isLoggedIn = pObj.optBoolean("isLoggedIn", false),
+        isFreeTrialActive = pObj.optBoolean("isFreeTrialActive", true),
+        trialMonthsRemaining = pObj.optInt("trialMonthsRemaining", 6),
+        registrationDateMillis = pObj.optLong("registrationDateMillis", System.currentTimeMillis()),
+        subscriptionExpiryMillis = pObj.optLong("subscriptionExpiryMillis", Long.MAX_VALUE),
+        currentPlanName = pObj.optString("currentPlanName", "লাইফটাইম আনলিমিটেড")
       )
     }
 
@@ -305,7 +332,8 @@ object GoogleDriveBackupManager {
             advancePaid = bObj.optDouble("advancePaid", 0.0),
             dueFare = bObj.optDouble("dueFare", 0.0),
             status = bObj.optString("status", "CONFIRMED"),
-            notes = bObj.optString("notes", "")
+            notes = bObj.optString("notes", ""),
+            createdAtMillis = bObj.optLong("createdAtMillis", System.currentTimeMillis())
           )
           bookingsList.add(booking)
         } catch (e: Exception) {

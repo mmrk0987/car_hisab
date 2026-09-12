@@ -6,6 +6,7 @@ import com.example.data.model.MobilServiceInfo
 import com.example.data.model.TripEntity
 import com.example.data.model.VehicleDocuments
 import com.example.data.repository.UserProfile
+import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -187,5 +188,38 @@ class BackupRestoreTest {
     assertEquals(2, restoredPayload.trips.size)
     assertEquals(1, restoredPayload.bookings.size)
     assertEquals("Md. Mahfujur Rahman", restoredPayload.profile?.driverName)
+  }
+
+  @Test
+  fun testDatabaseTransactionalRestore() = kotlinx.coroutines.test.runTest {
+    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val db = com.example.data.db.AppDatabase.getDatabase(context)
+
+    // Pre-populate with old dummy data
+    val oldTrip = TripEntity(id = 1L, dateString = "01 Jan 2026", place = "Old Trip", rent = 500.0, gratuity = 0.0, maintenanceCost = 0.0, income = 500.0, profit = 500.0)
+    db.tripDao().insertTrip(oldTrip)
+
+    val oldBooking = BookingEntity(id = 1L, passengerName = "Old Passenger", passengerPhone = "0000", pickupLocation = "A", dropLocation = "B", tripDateMillis = 1000L, tripDateString = "01 Jan 2026", totalFare = 1000.0)
+    db.bookingDao().insertBooking(oldBooking)
+
+    assertEquals(1, db.tripDao().getAllTripsSnapshot().size)
+    assertEquals(1, db.bookingDao().getAllBookingsSnapshot().size)
+
+    // Perform transactional restore with testTrips and testBookings
+    db.withTransaction {
+      db.tripDao().deleteAllTrips()
+      db.bookingDao().deleteAllBookings()
+      db.tripDao().insertTrips(testTrips)
+      db.bookingDao().insertBookings(testBookings)
+    }
+
+    val restoredTrips = db.tripDao().getAllTripsSnapshot()
+    val restoredBookings = db.bookingDao().getAllBookingsSnapshot()
+
+    assertEquals(2, restoredTrips.size)
+    assertEquals(1, restoredBookings.size)
+
+    assertTrue("Old trip should be replaced", restoredTrips.none { it.place == "Old Trip" })
+    assertTrue("New trips should contain Dhaka to Gazipur", restoredTrips.any { it.place == "Dhaka to Gazipur" })
   }
 }

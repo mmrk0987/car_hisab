@@ -32,6 +32,9 @@ interface BookingDao {
   @Query("DELETE FROM bookings WHERE id = :id")
   suspend fun deleteBookingById(id: Long)
 
+  @Query("DELETE FROM bookings")
+  suspend fun deleteAllBookings()
+
   @Delete
   suspend fun deleteBooking(booking: BookingEntity)
 
