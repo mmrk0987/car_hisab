@@ -1,7 +1,6 @@
 package com.example.data.drive
 
 import android.content.Context
-import android.net.Uri
 import android.util.Base64
 import android.util.Log
 import com.example.data.model.BookingEntity
@@ -9,11 +8,17 @@ import com.example.data.model.MobilServiceInfo
 import com.example.data.model.TripEntity
 import com.example.data.model.VehicleDocuments
 import com.example.data.repository.UserProfile
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 data class BackupDataPayload(
   val version: Int = 1,
@@ -31,6 +36,18 @@ object GoogleDriveBackupManager {
 
   private const val TAG = "GoogleDriveBackup"
   private const val SECRET_KEY = "CarHisabSecureDriveKey2026#X9"
+
+  /**
+   * OAuth Scope for hidden Google Drive AppData folder access.
+   */
+  const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
+  private const val BACKUP_FILE_NAME = "car_hisab_backup.json"
+  private const val APPDATA_SPACE = "appDataFolder"
+
+  private val httpClient = OkHttpClient.Builder()
+    .connectTimeout(30, TimeUnit.SECONDS)
+    .readTimeout(30, TimeUnit.SECONDS)
+    .build()
 
   /**
    * Decrypts secure encrypted payload back to plaintext JSON if encrypted.
@@ -317,41 +334,154 @@ object GoogleDriveBackupManager {
     return parseBackupPayload(jsonString).trips
   }
 
+  private fun getLocalBackupFile(context: Context): File {
+    val dir = File(context.filesDir, "drive_appdata").apply { mkdirs() }
+    return File(dir, BACKUP_FILE_NAME)
+  }
+
   /**
-   * Writes backup JSON string to an SAF Uri stream.
+   * Automatic background and foreground backup directly to the app's hidden AppData folder.
    */
-  fun writeBackupToUri(context: Context, uri: Uri, jsonContent: String): Boolean {
+  fun backupToAppDataFolder(
+    context: Context,
+    jsonContent: String,
+    accessToken: String? = null
+  ): Boolean {
     return try {
-      context.contentResolver.openOutputStream(uri, "w")?.use { out ->
-        out.write(jsonContent.toByteArray(Charsets.UTF_8))
-        out.flush()
+      // Always persist to local hidden app private storage first
+      val localFile = getLocalBackupFile(context)
+      localFile.writeText(jsonContent, Charsets.UTF_8)
+      Log.d(TAG, "Successfully cached backup JSON into local hidden AppData storage")
+
+      if (!accessToken.isNullOrBlank()) {
+        uploadToGoogleDriveAppData(jsonContent, accessToken)
       }
       true
     } catch (e: Exception) {
-      Log.e(TAG, "Failed writing backup to SAF URI", e)
+      Log.e(TAG, "Failed to perform AppData backup", e)
       false
     }
   }
 
   /**
-   * Reads backup JSON string from an SAF Uri stream.
+   * Automatic background and foreground restore directly pulling from hidden AppData folder.
    */
-  fun readBackupFromUri(context: Context, uri: Uri): String? {
+  fun restoreFromAppDataFolder(
+    context: Context,
+    accessToken: String? = null
+  ): String? {
     return try {
-      context.contentResolver.openInputStream(uri)?.use { inputStream ->
-        inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+      if (!accessToken.isNullOrBlank()) {
+        val driveContent = downloadFromGoogleDriveAppData(accessToken)
+        if (!driveContent.isNullOrBlank()) {
+          getLocalBackupFile(context).writeText(driveContent, Charsets.UTF_8)
+          return driveContent
+        }
+      }
+
+      val localFile = getLocalBackupFile(context)
+      if (localFile.exists()) {
+        localFile.readText(Charsets.UTF_8)
+      } else {
+        null
       }
     } catch (e: Exception) {
-      Log.e(TAG, "Failed reading backup from SAF URI", e)
+      Log.e(TAG, "Failed to restore backup from AppData folder", e)
       null
     }
   }
 
-  /**
-   * Restores trips from a specific file Uri (chosen from Storage Access Framework).
-   */
-  fun readTripsFromUri(context: Context, uri: Uri): List<TripEntity> {
-    val content = readBackupFromUri(context, uri) ?: return emptyList()
-    return parseBackupJson(content)
+  private fun findExistingFileIdInDrive(accessToken: String): String? {
+    val url = "https://www.googleapis.com/drive/v3/files?spaces=$APPDATA_SPACE&q=name%3D%27$BACKUP_FILE_NAME%27%20and%20trashed%3Dfalse"
+    val request = Request.Builder()
+      .url(url)
+      .addHeader("Authorization", "Bearer $accessToken")
+      .get()
+      .build()
+
+    httpClient.newCall(request).execute().use { response ->
+      if (!response.isSuccessful) return null
+      val body = response.body?.string() ?: return null
+      val json = JSONObject(body)
+      val files = json.optJSONArray("files") ?: return null
+      if (files.length() > 0) {
+        return files.getJSONObject(0).optString("id")
+      }
+    }
+    return null
+  }
+
+  private fun uploadToGoogleDriveAppData(jsonContent: String, accessToken: String): Boolean {
+    return try {
+      val existingId = findExistingFileIdInDrive(accessToken)
+      val mediaType = "application/json; charset=utf-8".toMediaType()
+
+      if (existingId != null) {
+        val updateUrl = "https://www.googleapis.com/upload/drive/v3/files/$existingId?uploadType=media"
+        val request = Request.Builder()
+          .url(updateUrl)
+          .addHeader("Authorization", "Bearer $accessToken")
+          .patch(jsonContent.toRequestBody(mediaType))
+          .build()
+
+        httpClient.newCall(request).execute().use { response ->
+          response.isSuccessful
+        }
+      } else {
+        val boundary = "---CarHisabBoundary${System.currentTimeMillis()}"
+        val metadataJson = JSONObject().apply {
+          put("name", BACKUP_FILE_NAME)
+          put("parents", JSONArray().put(APPDATA_SPACE))
+        }.toString()
+
+        val multipartBody = StringBuilder().apply {
+          append("--$boundary\r\n")
+          append("Content-Type: application/json; charset=UTF-8\r\n\r\n")
+          append(metadataJson)
+          append("\r\n--$boundary\r\n")
+          append("Content-Type: application/json\r\n\r\n")
+          append(jsonContent)
+          append("\r\n--$boundary--\r\n")
+        }.toString()
+
+        val uploadUrl = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
+        val multipartType = "multipart/related; boundary=$boundary".toMediaType()
+        val request = Request.Builder()
+          .url(uploadUrl)
+          .addHeader("Authorization", "Bearer $accessToken")
+          .post(multipartBody.toRequestBody(multipartType))
+          .build()
+
+        httpClient.newCall(request).execute().use { response ->
+          response.isSuccessful
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error uploading backup JSON to Google Drive AppData REST API", e)
+      false
+    }
+  }
+
+  private fun downloadFromGoogleDriveAppData(accessToken: String): String? {
+    return try {
+      val fileId = findExistingFileIdInDrive(accessToken) ?: return null
+      val downloadUrl = "https://www.googleapis.com/drive/v3/files/$fileId?alt=media"
+      val request = Request.Builder()
+        .url(downloadUrl)
+        .addHeader("Authorization", "Bearer $accessToken")
+        .get()
+        .build()
+
+      httpClient.newCall(request).execute().use { response ->
+        if (response.isSuccessful) {
+          response.body?.string()
+        } else {
+          null
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Error downloading backup JSON from Google Drive AppData REST API", e)
+      null
+    }
   }
 }

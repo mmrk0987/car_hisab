@@ -6,6 +6,7 @@ import com.example.data.model.MobilServiceInfo
 import com.example.data.model.TripEntity
 import com.example.data.model.VehicleDocuments
 import com.example.data.repository.UserProfile
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -160,5 +161,31 @@ class BackupRestoreTest {
     assertNotNull(parsedPayload)
     assertTrue(parsedPayload.trips.isEmpty())
     assertTrue(parsedPayload.bookings.isEmpty())
+  }
+
+  @Test
+  fun testAppDataBackupAndRestore() {
+    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+    val jsonString = GoogleDriveBackupManager.serializeBackupJson(
+      trips = testTrips,
+      profile = testProfile,
+      documents = testDocuments,
+      mobilService = testMobilService,
+      bookings = testBookings
+    )
+
+    val backupSuccess = GoogleDriveBackupManager.backupToAppDataFolder(
+      context = context,
+      jsonContent = jsonString
+    )
+    assertTrue("AppData backup should succeed", backupSuccess)
+
+    val restoredContent = GoogleDriveBackupManager.restoreFromAppDataFolder(context = context)
+    assertNotNull("Restored AppData content should not be null", restoredContent)
+
+    val restoredPayload = GoogleDriveBackupManager.parseBackupPayload(restoredContent!!)
+    assertEquals(2, restoredPayload.trips.size)
+    assertEquals(1, restoredPayload.bookings.size)
+    assertEquals("Md. Mahfujur Rahman", restoredPayload.profile?.driverName)
   }
 }

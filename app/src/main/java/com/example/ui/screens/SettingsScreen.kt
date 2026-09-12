@@ -144,8 +144,6 @@ fun SettingsScreen(
   isBackingUp: Boolean = false,
   isRestoring: Boolean = false,
   backupStatusMessage: String? = null,
-  onBackupToUri: (Uri) -> Unit = {},
-  onRestoreFromUri: (Uri) -> Unit = {},
   onGoogleDriveBackup: () -> Unit = {},
   onGoogleDriveRestore: (Uri?) -> Unit = {},
   onLogout: () -> Unit = {}
@@ -159,13 +157,6 @@ fun SettingsScreen(
   var generatedResultKey by remember { mutableStateOf("") }
   
   var showRestoreConfirmDialog by remember { mutableStateOf(false) }
-  val openDocumentLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.OpenDocument()
-  ) { uri: Uri? ->
-    if (uri != null) {
-      onRestoreFromUri(uri)
-    }
-  }
   val photoPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia()
   ) { uri: Uri? ->
@@ -1413,7 +1404,7 @@ fun SettingsScreen(
           Button(
             onClick = {
               showRestoreConfirmDialog = false
-              openDocumentLauncher.launch(arrayOf("application/json", "*/*"))
+              onGoogleDriveRestore(null)
             },
             colors = ButtonDefaults.buttonColors(containerColor = accentColor),
             shape = RoundedCornerShape(10.dp)

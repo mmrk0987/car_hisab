@@ -21,6 +21,7 @@ import com.example.data.repository.TripRepository
 import com.example.data.repository.UserProfile
 import com.example.data.repository.UserPreferencesRepository
 import com.example.ui.i18n.AppLanguage
+import com.example.worker.AutoBackupWorker
 import com.example.ui.theme.AppThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -79,6 +80,47 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch {
       tripRepo.clearPassengerNamesFromTrips()
       bookingRepo.deleteDemoBookings()
+      AutoBackupWorker.schedulePeriodicBackup(application)
+      performSilentAutoRestoreCheck(application)
+    }
+  }
+
+  fun checkAndPerformSilentAutoRestore(context: Context) {
+    viewModelScope.launch {
+      performSilentAutoRestoreCheck(context)
+    }
+  }
+
+  private suspend fun performSilentAutoRestoreCheck(context: Context) {
+    try {
+      val currentTrips = tripRepo.getAllTripsSnapshot()
+      val currentBookings = bookingRepo.getAllBookingsSnapshot()
+      if (currentTrips.isEmpty() && currentBookings.isEmpty()) {
+        val rawContent = GoogleDriveBackupManager.restoreFromAppDataFolder(context)
+        if (!rawContent.isNullOrBlank()) {
+          val payload = GoogleDriveBackupManager.parseBackupPayload(rawContent)
+          if (payload.trips.isNotEmpty() || payload.bookings.isNotEmpty() || payload.profile != null) {
+            if (payload.trips.isNotEmpty()) {
+              tripRepo.insertTrips(payload.trips)
+            }
+            if (payload.bookings.isNotEmpty()) {
+              bookingRepo.insertBookings(payload.bookings)
+            }
+            payload.profile?.let { userPrefsRepo.updateProfile(it) }
+            payload.documents?.let { userPrefsRepo.updateDocuments(it) }
+            payload.mobilService?.let { userPrefsRepo.updateMobilService(it) }
+
+            val count = payload.trips.size
+            val now = System.currentTimeMillis()
+            userPrefsRepo.setLastDriveBackupTime(now)
+            userPrefsRepo.setLastBackupTripCount(count)
+            _lastBackupTime.value = now
+            _lastBackupCount.value = count
+            _backupStatusMessage.value = "Silently restored $count trips from AppData"
+          }
+        }
+      }
+    } catch (_: Exception) {
     }
   }
 
@@ -364,6 +406,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         notes = notes.trim()
       )
       bookingRepo.insertBooking(booking)
+      AutoBackupWorker.triggerOneTimeBackup(getApplication())
     }
   }
 
@@ -862,6 +905,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
 
     viewModelScope.launch {
       tripRepo.insertTrip(newTrip)
+      AutoBackupWorker.triggerOneTimeBackup(getApplication())
       _tripPlace.value = ""
       _rentInput.value = ""
       _gratuityInput.value = ""
@@ -878,6 +922,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   fun deleteTrip(trip: TripEntity) {
     viewModelScope.launch {
       tripRepo.deleteTrip(trip)
+      AutoBackupWorker.triggerOneTimeBackup(getApplication())
     }
   }
 
@@ -887,6 +932,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       val profit = income - trip.maintenanceCost
       val updated = trip.copy(income = income, profit = profit)
       tripRepo.updateTrip(updated)
+      AutoBackupWorker.triggerOneTimeBackup(getApplication())
       onSuccess()
     }
   }
@@ -970,9 +1016,8 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     _backupStatusMessage.value = null
   }
 
-  fun performBackupToUri(
+  fun performGoogleDriveBackup(
     context: Context,
-    uri: Uri,
     onSuccess: (count: Int) -> Unit,
     onError: (String) -> Unit
   ) {
@@ -993,17 +1038,23 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
           bookings = bookings
         )
 
-        val success = GoogleDriveBackupManager.writeBackupToUri(context, uri, jsonString)
+        val success = GoogleDriveBackupManager.backupToAppDataFolder(
+          context = context,
+          jsonContent = jsonString
+        )
+
         if (success) {
           val now = System.currentTimeMillis()
           userPrefsRepo.setLastDriveBackupTime(now)
           userPrefsRepo.setLastBackupTripCount(trips.size)
           _lastBackupTime.value = now
           _lastBackupCount.value = trips.size
-          _backupStatusMessage.value = "Backup created: ${trips.size} trips"
+          _backupStatusMessage.value = "Automatic AppData backup created: ${trips.size} trips"
+          AutoBackupWorker.triggerOneTimeBackup(context)
+          AutoBackupWorker.schedulePeriodicBackup(context)
           onSuccess(trips.size)
         } else {
-          onError("Failed writing backup file to storage")
+          onError("Failed writing automatic backup payload")
         }
       } catch (e: Exception) {
         onError(e.localizedMessage ?: "Backup failed")
@@ -1013,26 +1064,25 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
-  fun performRestoreFromUri(
+  fun performGoogleDriveRestore(
     context: Context,
-    uri: Uri,
     onSuccess: (count: Int) -> Unit,
     onError: (String) -> Unit
   ) {
     viewModelScope.launch {
       _isRestoring.value = true
       try {
-        val rawContent = GoogleDriveBackupManager.readBackupFromUri(context, uri)
+        val rawContent = GoogleDriveBackupManager.restoreFromAppDataFolder(context)
         if (rawContent.isNullOrBlank()) {
           _isRestoring.value = false
-          onError("Could not read backup file content")
+          onError("No automatic backup found in hidden AppData folder")
           return@launch
         }
 
         val payload = GoogleDriveBackupManager.parseBackupPayload(rawContent)
         if (payload.trips.isEmpty() && payload.bookings.isEmpty() && payload.profile == null) {
           _isRestoring.value = false
-          onError("Invalid backup file or no data found")
+          onError("Invalid backup file or no data found in AppData folder")
           return@launch
         }
 
@@ -1053,37 +1103,13 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         _lastBackupTime.value = now
         _lastBackupCount.value = count
 
-        _backupStatusMessage.value = "Restored $count trips successfully"
+        _backupStatusMessage.value = "Restored $count trips automatically from AppData"
         onSuccess(count)
       } catch (e: Exception) {
         onError(e.localizedMessage ?: "Restore failed")
       } finally {
         _isRestoring.value = false
       }
-    }
-  }
-
-  fun performGoogleDriveBackup(
-    context: Context,
-    onSuccess: (count: Int) -> Unit,
-    onError: (String) -> Unit
-  ) {
-    viewModelScope.launch {
-      _backupStatusMessage.value = "Use Storage Access Framework to select backup location"
-      onError("Select a location to save backup file")
-    }
-  }
-
-  fun performGoogleDriveRestore(
-    context: Context,
-    uri: Uri? = null,
-    onSuccess: (count: Int) -> Unit,
-    onError: (String) -> Unit
-  ) {
-    if (uri != null) {
-      performRestoreFromUri(context, uri, onSuccess, onError)
-    } else {
-      onError("No backup file selected")
     }
   }
 }

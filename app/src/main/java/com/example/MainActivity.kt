@@ -351,6 +351,7 @@ class MainActivity : FragmentActivity() {
                   },
                   onLoginSuccess = { email, remember ->
                     viewModel.updateRememberEmail(email, remember)
+                    viewModel.checkAndPerformSilentAutoRestore(context)
                     viewModel.navigateTo(AppScreen.DASHBOARD)
                   },
                   onSignUpSuccess = { email, phone ->
@@ -713,30 +714,6 @@ class MainActivity : FragmentActivity() {
                       }
                     )
                   },
-                  onBackupToUri = { uri ->
-                    viewModel.performBackupToUri(
-                      context = context,
-                      uri = uri,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.backupSuccess(language, count), Toast.LENGTH_LONG).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onRestoreFromUri = { uri ->
-                    viewModel.performRestoreFromUri(
-                      context = context,
-                      uri = uri,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
                   onGoogleDriveBackup = {
                     viewModel.performGoogleDriveBackup(
                       context = context,
@@ -748,10 +725,9 @@ class MainActivity : FragmentActivity() {
                       }
                     )
                   },
-                  onGoogleDriveRestore = { uri ->
+                  onGoogleDriveRestore = {
                     viewModel.performGoogleDriveRestore(
                       context = context,
-                      uri = uri,
                       onSuccess = { count ->
                         Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
                       },
@@ -823,30 +799,6 @@ class MainActivity : FragmentActivity() {
                       Toast.LENGTH_SHORT
                     ).show()
                   },
-                  onBackupToUri = { uri ->
-                    viewModel.performBackupToUri(
-                      context = context,
-                      uri = uri,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.backupSuccess(language, count), Toast.LENGTH_LONG).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onRestoreFromUri = { uri ->
-                    viewModel.performRestoreFromUri(
-                      context = context,
-                      uri = uri,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
                   onGoogleDriveBackup = {
                     viewModel.performGoogleDriveBackup(
                       context = context,
@@ -858,10 +810,9 @@ class MainActivity : FragmentActivity() {
                       }
                     )
                   },
-                  onGoogleDriveRestore = { uri ->
+                  onGoogleDriveRestore = {
                     viewModel.performGoogleDriveRestore(
                       context = context,
-                      uri = uri,
                       onSuccess = { count ->
                         Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
                       },

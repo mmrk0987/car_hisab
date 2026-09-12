@@ -90,29 +90,11 @@ fun DriveBackupScreen(
   backupStatusMessage: String?,
   isWeeklyReminderEnabled: Boolean = true,
   onToggleWeeklyReminder: (Boolean) -> Unit = {},
-  onBackupToUri: (Uri) -> Unit = {},
-  onRestoreFromUri: (Uri) -> Unit = {},
   onGoogleDriveBackup: () -> Unit = {},
   onGoogleDriveRestore: (Uri?) -> Unit = {},
   onBack: () -> Unit
 ) {
   var showRestoreConfirmDialog by remember { mutableStateOf(false) }
-
-  val createDocumentLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.CreateDocument("application/json")
-  ) { uri: Uri? ->
-    if (uri != null) {
-      onBackupToUri(uri)
-    }
-  }
-
-  val openDocumentLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.OpenDocument()
-  ) { uri: Uri? ->
-    if (uri != null) {
-      onRestoreFromUri(uri)
-    }
-  }
 
   Scaffold(
     topBar = {
@@ -485,8 +467,7 @@ fun DriveBackupScreen(
           // Backup Now
           Button(
             onClick = {
-              val dateStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-              createDocumentLauncher.launch("CarHisab_Backup_$dateStamp.json")
+              onGoogleDriveBackup()
             },
             enabled = !isBackingUp && !isRestoring,
             modifier = Modifier
@@ -627,7 +608,7 @@ fun DriveBackupScreen(
           Button(
             onClick = {
               showRestoreConfirmDialog = false
-              openDocumentLauncher.launch(arrayOf("application/json", "*/*"))
+              onGoogleDriveRestore(null)
             },
             colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
           ) {
