@@ -107,6 +107,7 @@ fun LoginScreen(
   var rememberEmail by remember { mutableStateOf(savedRememberEmail) }
   var isLoginPasswordVisible by remember { mutableStateOf(false) }
   var loginError by remember { mutableStateOf<String?>(null) }
+  var loginErrorDetail by remember { mutableStateOf<String?>(null) }
   var isLoggingIn by remember { mutableStateOf(false) }
 
   // Sign Up States
@@ -117,6 +118,7 @@ fun LoginScreen(
   var isSignUpPasswordVisible by remember { mutableStateOf(false) }
   var isRetypePasswordVisible by remember { mutableStateOf(false) }
   var signUpError by remember { mutableStateOf<String?>(null) }
+  var signUpErrorDetail by remember { mutableStateOf<String?>(null) }
   var isSigningUp by remember { mutableStateOf(false) }
 
   // Automatic Google/Gmail Account Detection from Android Phone
@@ -140,6 +142,7 @@ fun LoginScreen(
       if (!accountName.isNullOrBlank()) {
         signUpGmail = accountName
         signUpError = null
+        signUpErrorDetail = null
       }
     }
   }
@@ -161,6 +164,7 @@ fun LoginScreen(
       if (detectedAccounts.isNotEmpty()) {
         signUpGmail = detectedAccounts.first()
         signUpError = null
+        signUpErrorDetail = null
       }
     }
   }
@@ -171,6 +175,7 @@ fun LoginScreen(
       if (detectedAccounts.isNotEmpty()) {
         signUpGmail = detectedAccounts.first()
         signUpError = null
+        signUpErrorDetail = null
       } else {
         try {
           val intent = AccountManager.newChooseAccountIntent(
@@ -306,6 +311,7 @@ fun LoginScreen(
             onValueChange = {
               loginEmail = it
               loginError = null
+              loginErrorDetail = null
             },
             label = { Text(if (language == AppLanguage.BANGLA) "ইমেইল / জিমেইল" else "Email / Gmail") },
             placeholder = { Text("driver@gmail.com") },
@@ -336,6 +342,7 @@ fun LoginScreen(
             onValueChange = {
               loginPassword = it
               loginError = null
+              loginErrorDetail = null
             },
             label = { Text(if (language == AppLanguage.BANGLA) "পাসওয়ার্ড" else "Password") },
             placeholder = { Text("••••••") },
@@ -398,12 +405,22 @@ fun LoginScreen(
           }
 
           if (loginError != null) {
-            Text(
-              text = loginError ?: "",
-              color = LossRed,
-              fontSize = 12.sp,
-              modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
-            )
+            Column(modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)) {
+              Text(
+                text = loginError ?: "",
+                color = LossRed,
+                fontSize = 12.sp
+              )
+              if (!loginErrorDetail.isNullOrBlank()) {
+                Text(
+                  text = "[Diagnostics] Exception: ${loginErrorDetail}",
+                  color = Color(0xFFFF8A80),
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.Bold,
+                  modifier = Modifier.padding(top = 2.dp)
+                )
+              }
+            }
           }
 
           Spacer(modifier = Modifier.height(18.dp))
@@ -415,15 +432,18 @@ fun LoginScreen(
               val password = loginPassword.trim()
               if (email.isBlank()) {
                 loginError = if (language == AppLanguage.BANGLA) "দয়া করে ইমেইল দিন" else "Please enter your email"
+                loginErrorDetail = null
                 return@Button
               }
               if (password.isBlank()) {
                 loginError = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড দিন" else "Please enter password"
+                loginErrorDetail = null
                 return@Button
               }
 
               isLoggingIn = true
               loginError = null
+              loginErrorDetail = null
 
               coroutineScope.launch {
                 val authResult = SupabaseAuthManager.loginWithEmail(
@@ -438,6 +458,9 @@ fun LoginScreen(
                   onLoginSuccess(authResult.email ?: email, rememberEmail)
                 } else {
                   loginError = authResult.message
+                  loginErrorDetail = authResult.errorDetail
+                  val toastMsg = "Login Error: ${authResult.message}\nDetail: ${authResult.errorDetail ?: "N/A"}"
+                  Toast.makeText(context, toastMsg, Toast.LENGTH_LONG).show()
                 }
               }
             },
@@ -612,6 +635,7 @@ fun LoginScreen(
                         .clickable {
                           signUpGmail = acc
                           signUpError = null
+                          signUpErrorDetail = null
                         }
                     ) {
                       Row(
@@ -647,6 +671,7 @@ fun LoginScreen(
             onValueChange = {
               signUpGmail = it
               signUpError = null
+              signUpErrorDetail = null
             },
             label = { Text(if (language == AppLanguage.BANGLA) "জিমেইল ঠিকানা (Gmail Only)" else "Gmail Address (Only @gmail.com)") },
             placeholder = { Text("username@gmail.com") },
@@ -702,6 +727,7 @@ fun LoginScreen(
             onValueChange = {
               signUpPhone = it
               signUpError = null
+              signUpErrorDetail = null
             },
             label = { Text(if (language == AppLanguage.BANGLA) "মোবাইল নম্বর" else "Phone Number") },
             placeholder = { Text("01712345678") },
@@ -732,6 +758,7 @@ fun LoginScreen(
             onValueChange = {
               signUpPassword = it
               signUpError = null
+              signUpErrorDetail = null
             },
             label = { Text(if (language == AppLanguage.BANGLA) "পাসওয়ার্ড দিন" else "Password") },
             placeholder = { Text("কমপক্ষে ৬ অক্ষর") },
@@ -772,6 +799,7 @@ fun LoginScreen(
             onValueChange = {
               signUpRetypePassword = it
               signUpError = null
+              signUpErrorDetail = null
             },
             label = { Text(if (language == AppLanguage.BANGLA) "পুনরায় পাসওয়ার্ড দিন" else "Retype Password") },
             placeholder = { Text("একই পাসওয়ার্ড পুনরায় লিখুন") },
@@ -805,12 +833,22 @@ fun LoginScreen(
           )
 
           if (signUpError != null) {
-            Text(
-              text = signUpError ?: "",
-              color = LossRed,
-              fontSize = 12.sp,
-              modifier = Modifier.padding(top = 6.dp)
-            )
+            Column(modifier = Modifier.padding(top = 6.dp)) {
+              Text(
+                text = signUpError ?: "",
+                color = LossRed,
+                fontSize = 12.sp
+              )
+              if (!signUpErrorDetail.isNullOrBlank()) {
+                Text(
+                  text = "[Diagnostics] Exception: ${signUpErrorDetail}",
+                  color = Color(0xFFFF8A80),
+                  fontSize = 11.sp,
+                  fontWeight = FontWeight.Bold,
+                  modifier = Modifier.padding(top = 2.dp)
+                )
+              }
+            }
           }
 
           Spacer(modifier = Modifier.height(20.dp))
@@ -823,22 +861,27 @@ fun LoginScreen(
               val password = signUpPassword
               if (!email.endsWith("@gmail.com") || email.length <= 10) {
                 signUpError = if (language == AppLanguage.BANGLA) "শুধুমাত্র বৈধ Gmail (@gmail.com) দিয়ে সাইন আপ সম্ভব" else "Only valid Gmail (@gmail.com) allowed"
+                signUpErrorDetail = null
                 return@Button
               }
               if (phone.length < 11) {
                 signUpError = if (language == AppLanguage.BANGLA) "সঠিক ১১-সংখ্যার মোবাইল নম্বর দিন" else "Enter valid 11-digit phone number"
+                signUpErrorDetail = null
                 return@Button
               }
               if (password.length < 6) {
                 signUpError = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে" else "Password must be at least 6 characters"
+                signUpErrorDetail = null
                 return@Button
               }
               if (password != signUpRetypePassword) {
                 signUpError = if (language == AppLanguage.BANGLA) "উভয় পাসওয়ার্ড মিলছে না" else "Passwords do not match"
+                signUpErrorDetail = null
                 return@Button
               }
 
               signUpError = null
+              signUpErrorDetail = null
               isSigningUp = true
 
               coroutineScope.launch {
@@ -855,6 +898,9 @@ fun LoginScreen(
                   onSignUpSuccess(email, phone)
                 } else {
                   signUpError = supabaseResult.message
+                  signUpErrorDetail = supabaseResult.errorDetail
+                  val toastMsg = "Sign-Up Error: ${supabaseResult.message}\nDetail: ${supabaseResult.errorDetail ?: "N/A"}"
+                  Toast.makeText(context, toastMsg, Toast.LENGTH_LONG).show()
                 }
               }
             },
