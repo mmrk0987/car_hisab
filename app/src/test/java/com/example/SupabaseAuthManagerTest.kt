@@ -4,7 +4,6 @@ import com.example.data.auth.SupabaseAuthManager
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -50,15 +49,5 @@ class SupabaseAuthManagerTest {
     )
     assertFalse(result.success)
     assertTrue(result.message.contains("৬ অক্ষর"))
-  }
-
-  @Test
-  fun testVerifyOtpEmptyTokenFails() = runBlocking {
-    val result = SupabaseAuthManager.verifyEmailOtp(
-      email = "driver@gmail.com",
-      token = ""
-    )
-    assertFalse(result.success)
-    assertTrue(result.message.contains("ওটিপি"))
   }
 }

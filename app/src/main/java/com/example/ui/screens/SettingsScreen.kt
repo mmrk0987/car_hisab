@@ -30,43 +30,27 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FileDownload
-import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MarkEmailRead
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SettingsBrightness
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -76,7 +60,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,23 +75,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.BuildConfig
-import com.example.data.auth.EmailOtpManager
 import com.example.data.export.ExportFormat
 import com.example.data.export.ExportScope
 import com.example.data.model.TripEntity
 import com.example.data.repository.UserProfile
 import com.example.ui.components.ExportDialog
 import com.example.ui.i18n.AppLanguage
-import com.example.ui.i18n.AppStrings
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.DarkGreenBorder
 import com.example.ui.theme.DarkGreenCard
 import com.example.ui.theme.DarkGreenPrimary
-import com.example.ui.theme.DarkGreenSurface
 import com.example.ui.theme.LossRed
 import com.example.ui.theme.MintGreenAccent
-import com.example.ui.theme.ProfitGreen
-import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -116,11 +94,6 @@ fun SettingsScreen(
   themeMode: AppThemeMode,
   profile: UserProfile,
   trips: List<TripEntity> = emptyList(),
-  emailOtpProvider: String = "RESEND",
-  emailOtpApiKey: String = "",
-  emailOtpWebhookUrl: String = "",
-  emailOtpSenderEmail: String = "Car Hisab <onboarding@resend.dev>",
-  onSaveEmailOtpSettings: (provider: String, apiKey: String, webhook: String, sender: String) -> Unit = { _, _, _, _ -> },
   onLanguageChange: (AppLanguage) -> Unit = {},
   onOpenLanguageSettings: () -> Unit = {},
   onOpenDriveBackup: () -> Unit = {},
@@ -155,7 +128,7 @@ fun SettingsScreen(
   var adminTargetIdInput by remember { mutableStateOf("") }
   var adminSelectedDurationDays by remember { mutableStateOf(30) }
   var generatedResultKey by remember { mutableStateOf("") }
-  
+
   var showRestoreConfirmDialog by remember { mutableStateOf(false) }
   val photoPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia()
@@ -168,18 +141,6 @@ fun SettingsScreen(
   var showEditProfileDialog by remember { mutableStateOf(false) }
   var showExportDialog by remember { mutableStateOf(false) }
   var exportInitialScope by remember { mutableStateOf(ExportScope.CURRENT_MONTH) }
-
-  var showEmailOtpSettingsDialog by remember { mutableStateOf(false) }
-  var selectedOtpProvider by remember(emailOtpProvider) {
-    mutableStateOf(if (emailOtpProvider.isBlank() || emailOtpProvider.equals("RESEND", true)) "BREVO" else emailOtpProvider)
-  }
-  var enteredOtpApiKey by remember { mutableStateOf(emailOtpApiKey) }
-  var enteredOtpWebhookUrl by remember { mutableStateOf(emailOtpWebhookUrl) }
-  var enteredOtpSenderEmail by remember { mutableStateOf(emailOtpSenderEmail) }
-  var isSendingTestOtp by remember { mutableStateOf(false) }
-  var testOtpResult by remember { mutableStateOf<String?>(null) }
-  var isTestSuccess by remember { mutableStateOf(false) }
-  val coroutineScope = rememberCoroutineScope()
 
   val currentCal = remember { java.util.Calendar.getInstance() }
   val curYear = currentCal.get(java.util.Calendar.YEAR)
@@ -771,85 +732,6 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Card: EMAIL OTP GATEWAY CONFIGURATION
-      Card(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(16.dp))
-          .clickable {
-            selectedOtpProvider = if (emailOtpProvider.isBlank() || emailOtpProvider.equals("RESEND", true)) "BREVO" else emailOtpProvider
-            enteredOtpApiKey = emailOtpApiKey
-            enteredOtpWebhookUrl = emailOtpWebhookUrl
-            enteredOtpSenderEmail = emailOtpSenderEmail
-            testOtpResult = null
-            showEmailOtpSettingsDialog = true
-          }
-          .testTag("settings_email_otp_card"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-      ) {
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
-          ) {
-            Surface(
-              modifier = Modifier.size(44.dp),
-              shape = CircleShape,
-              color = accentColor.copy(alpha = 0.15f),
-              border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.3f))
-            ) {
-              Box(contentAlignment = Alignment.Center) {
-                Icon(
-                  imageVector = Icons.Default.MarkEmailRead,
-                  contentDescription = null,
-                  tint = accentColor,
-                  modifier = Modifier.size(24.dp)
-                )
-              }
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            Column {
-              Text(
-                text = if (language == AppLanguage.BANGLA) "ইমেইল ওটিপি গেটওয়ে সেটিংস" else "Email OTP Gateway Settings",
-                fontSize = 14.5.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(3.dp))
-              Text(
-                text = if (emailOtpApiKey.isNotBlank()) {
-                  if (language == AppLanguage.BANGLA) "Brevo API সক্রিয় (রিয়েল ওটিপি চালু - দিনে ৩০০ ইমেইল)" else "Active: Brevo API (Real OTP - 300/day)"
-                } else {
-                  if (language == AppLanguage.BANGLA) "Brevo API Key কনফিগার করুন (দিনে ৩০০ ফ্রি ইমেইল)" else "Configure Brevo API Key (300 free/day)"
-                },
-                fontSize = 12.sp,
-                color = if (emailOtpApiKey.isNotBlank()) ProfitGreen else LossRed,
-                fontWeight = FontWeight.Medium
-              )
-            }
-          }
-
-          Icon(
-            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-            contentDescription = "Open Email OTP Settings",
-            tint = accentColor,
-            modifier = Modifier.size(20.dp)
-          )
-        }
-      }
-
-      Spacer(modifier = Modifier.height(10.dp))
-
       // LOGOUT CARD
       Card(
         modifier = Modifier
@@ -1104,7 +986,7 @@ fun SettingsScreen(
             }
           }
         )
-      }
+    }
 
     // Edit Profile Dialog
     if (showEditProfileDialog) {
@@ -1423,227 +1305,8 @@ fun SettingsScreen(
         }
       )
     }
-
-    if (showEmailOtpSettingsDialog) {
-      AlertDialog(
-        onDismissRequest = { showEmailOtpSettingsDialog = false },
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(24.dp),
-        modifier = Modifier.testTag("email_otp_settings_dialog"),
-        icon = {
-          Icon(
-            imageVector = Icons.Default.MarkEmailRead,
-            contentDescription = null,
-            tint = accentColor,
-            modifier = Modifier.size(32.dp)
-          )
-        },
-        title = {
-          Text(
-            text = if (language == AppLanguage.BANGLA) "ইমেইল ওটিপি গেটওয়ে কনফিগারেশন" else "Email OTP Gateway Setup",
-            fontSize = 17.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-          )
-        },
-        text = {
-          Column(
-            modifier = Modifier
-              .fillMaxWidth()
-              .verticalScroll(rememberScrollState())
-          ) {
-            Text(
-              text = if (language == AppLanguage.BANGLA)
-                "লগইন ও সাইন আপে চালকদের জিমেইল ইনবক্সে আসল ওটিপি পাঠাতে নিচের যেকোনো ফ্রি গেটওয়ে ব্যবহার করতে পারেন:"
-              else
-                "To deliver real OTPs to Gmail inboxes for login/signup, configure any free provider below:",
-              fontSize = 12.sp,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              lineHeight = 16.sp
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-              text = if (language == AppLanguage.BANGLA) "ইমেইল সার্ভিস প্রোভাইডার:" else "Email Service Provider:",
-              fontSize = 12.5.sp,
-              fontWeight = FontWeight.Bold,
-              color = MaterialTheme.colorScheme.onSurface
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-              FilterChip(
-                selected = selectedOtpProvider.equals("BREVO", ignoreCase = true),
-                onClick = { selectedOtpProvider = "BREVO" },
-                label = { Text("Brevo (Free 300/day)", fontSize = 11.sp) }
-              )
-              FilterChip(
-                selected = selectedOtpProvider.equals("RESEND", ignoreCase = true),
-                onClick = { selectedOtpProvider = "RESEND" },
-                label = { Text("Resend (Free 3k/mo)", fontSize = 11.sp) }
-              )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-              text = if (selectedOtpProvider.equals("BREVO", true)) "Brevo API Key (xkeysib-...):" else "Resend API Key (re_...):",
-              fontSize = 12.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            OutlinedTextField(
-              value = enteredOtpApiKey,
-              onValueChange = { enteredOtpApiKey = it },
-              placeholder = { Text(if (selectedOtpProvider.equals("BREVO", true)) "xkeysib-..." else "re_123456789...") },
-              singleLine = true,
-              shape = RoundedCornerShape(12.dp),
-              modifier = Modifier
-                .fillMaxWidth()
-                .testTag("otp_api_key_input")
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-              text = if (language == AppLanguage.BANGLA) "প্রেরকের নাম ও ইমেইল (Sender Email):" else "Sender Name & Email:",
-              fontSize = 12.sp,
-              fontWeight = FontWeight.SemiBold,
-              color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            OutlinedTextField(
-              value = enteredOtpSenderEmail,
-              onValueChange = { enteredOtpSenderEmail = it },
-              placeholder = { Text(if (selectedOtpProvider.equals("BREVO", true)) "your-brevo-email@gmail.com" else "Car Hisab <onboarding@resend.dev>") },
-              singleLine = true,
-              shape = RoundedCornerShape(12.dp),
-              modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-              text = if (selectedOtpProvider.equals("BREVO", true)) {
-                if (language == AppLanguage.BANGLA)
-                  "💡 Brevo টিপস: Brevo একাউন্টে সাইন আপ করার সময় যে ইমেইল ব্যবহার করেছেন (অথবা Senders এ ভেরিফাই করা ইমেইল) সেটি এখানে দিন। প্রতিদিন ৩০০টি ইমেইল সম্পূর্ণ ফ্রি।"
-                else
-                  "💡 Brevo tip: Use the email registered in your Brevo account (or a verified sender). 300 emails/day are 100% free."
-              } else {
-                if (language == AppLanguage.BANGLA)
-                  "💡 Resend টিপস: টেস্টিংয়ের জন্য onboarding@resend.dev ব্যবহার করতে পারেন।"
-                else
-                  "💡 Resend tip: You can use onboarding@resend.dev for testing."
-              },
-              fontSize = 11.sp,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              lineHeight = 15.sp
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            val testTarget = profile.driverEmail.ifBlank { "mdmahfuj0987@gmail.com" }
-            OutlinedButton(
-              onClick = {
-                isSendingTestOtp = true
-                testOtpResult = null
-                coroutineScope.launch {
-                  val result = EmailOtpManager.sendOtp(
-                    recipientEmail = testTarget,
-                    provider = selectedOtpProvider,
-                    apiKey = enteredOtpApiKey,
-                    webhookUrl = enteredOtpWebhookUrl,
-                    senderEmail = enteredOtpSenderEmail
-                  )
-                  isSendingTestOtp = false
-                  isTestSuccess = result.isRealEmailSent
-                  testOtpResult = result.message + (if (result.errorDetail != null) "\n(${result.errorDetail})" else "")
-                }
-              },
-              enabled = !isSendingTestOtp,
-              modifier = Modifier
-                .fillMaxWidth()
-                .testTag("send_test_otp_button"),
-              shape = RoundedCornerShape(12.dp),
-              colors = ButtonDefaults.outlinedButtonColors(contentColor = accentColor)
-            ) {
-              if (isSendingTestOtp) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = accentColor, strokeWidth = 2.dp)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(if (language == AppLanguage.BANGLA) "ওটিপি পাঠানো হচ্ছে..." else "Sending OTP...", fontSize = 12.sp)
-              } else {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                  text = if (language == AppLanguage.BANGLA) "যাচাই ইমেইল ওটিপি পাঠান ($testTarget)" else "Send Verification OTP ($testTarget)",
-                  fontSize = 12.sp
-                )
-              }
-            }
-
-            if (testOtpResult != null) {
-              Spacer(modifier = Modifier.height(8.dp))
-              Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                colors = CardDefaults.cardColors(
-                  containerColor = if (isTestSuccess) ProfitGreen.copy(alpha = 0.15f) else LossRed.copy(alpha = 0.15f)
-                ),
-                border = androidx.compose.foundation.BorderStroke(
-                  1.dp,
-                  if (isTestSuccess) ProfitGreen else LossRed.copy(alpha = 0.5f)
-                )
-              ) {
-                Text(
-                  text = testOtpResult ?: "",
-                  fontSize = 11.5.sp,
-                  color = if (isTestSuccess) ProfitGreen else LossRed,
-                  modifier = Modifier.padding(10.dp)
-                )
-              }
-            }
-          }
-        },
-        confirmButton = {
-          Button(
-            onClick = {
-              onSaveEmailOtpSettings(
-                selectedOtpProvider,
-                enteredOtpApiKey.trim(),
-                enteredOtpWebhookUrl.trim(),
-                enteredOtpSenderEmail.trim()
-              )
-              showEmailOtpSettingsDialog = false
-              android.widget.Toast.makeText(
-                context,
-                if (language == AppLanguage.BANGLA) "ইমেইল ওটিপি গেটওয়ে সংরক্ষিত হয়েছে!" else "Email OTP Gateway settings saved!",
-                android.widget.Toast.LENGTH_SHORT
-              ).show()
-            },
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-            modifier = Modifier.testTag("save_email_otp_settings_button")
-          ) {
-            Text(
-              text = if (language == AppLanguage.BANGLA) "সেটিংস সংরক্ষণ করুন" else "Save Settings",
-              fontWeight = FontWeight.Bold,
-              color = Color(0xFF022B1E)
-            )
-          }
-        },
-        dismissButton = {
-          TextButton(
-            onClick = { showEmailOtpSettingsDialog = false }
-          ) {
-            Text(if (language == AppLanguage.BANGLA) "বাতিল" else "Cancel")
-          }
-        }
-      )
-    }
   }
-}
+  }
 }
 
 @Composable

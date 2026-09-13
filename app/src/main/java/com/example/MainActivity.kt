@@ -102,10 +102,6 @@ class MainActivity : FragmentActivity() {
       val language by viewModel.language.collectAsStateWithLifecycle()
       val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
       val profile by viewModel.userProfile.collectAsStateWithLifecycle()
-      val otpProvider by viewModel.emailOtpProvider.collectAsStateWithLifecycle()
-      val otpApiKey by viewModel.emailOtpApiKey.collectAsStateWithLifecycle()
-      val otpWebhookUrl by viewModel.emailOtpWebhookUrl.collectAsStateWithLifecycle()
-      val otpSenderEmail by viewModel.emailOtpSenderEmail.collectAsStateWithLifecycle()
       val context = LocalContext.current
 
       MyApplicationTheme(themeMode = themeMode) {
@@ -339,16 +335,6 @@ class MainActivity : FragmentActivity() {
                   language = language,
                   savedEmail = profile.savedEmail,
                   savedRememberEmail = profile.rememberEmail,
-                  otpProvider = otpProvider,
-                  otpApiKey = otpApiKey,
-                  otpWebhookUrl = otpWebhookUrl,
-                  otpSenderEmail = otpSenderEmail,
-                  onSaveOtpSettings = { provider, key, webhook, sender ->
-                    viewModel.setEmailOtpProvider(provider)
-                    viewModel.setEmailOtpApiKey(key)
-                    viewModel.setEmailOtpWebhookUrl(webhook)
-                    viewModel.setEmailOtpSenderEmail(sender)
-                  },
                   onLoginSuccess = { email, remember ->
                     viewModel.updateRememberEmail(email, remember)
                     viewModel.checkAndPerformSilentAutoRestore(context)
@@ -663,16 +649,6 @@ class MainActivity : FragmentActivity() {
                   themeMode = themeMode,
                   profile = profile,
                   trips = allTripsForExport,
-                  emailOtpProvider = otpProvider,
-                  emailOtpApiKey = otpApiKey,
-                  emailOtpWebhookUrl = otpWebhookUrl,
-                  emailOtpSenderEmail = otpSenderEmail,
-                  onSaveEmailOtpSettings = { provider, key, webhook, sender ->
-                    viewModel.setEmailOtpProvider(provider)
-                    viewModel.setEmailOtpApiKey(key)
-                    viewModel.setEmailOtpWebhookUrl(webhook)
-                    viewModel.setEmailOtpSenderEmail(sender)
-                  },
                   lastBackupTime = lastBackupTime,
                   lastBackupCount = lastBackupCount,
                   isBackingUp = isBackingUp,

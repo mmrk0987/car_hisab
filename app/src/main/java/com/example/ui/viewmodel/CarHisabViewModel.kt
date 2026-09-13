@@ -161,26 +161,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   val userProfile: StateFlow<UserProfile> = userPrefsRepo.profileFlow
   val vehicleDocuments: StateFlow<VehicleDocuments> = userPrefsRepo.documentsFlow
   val mobilServiceInfo: StateFlow<MobilServiceInfo> = userPrefsRepo.mobilServiceFlow
-  val emailOtpProvider: StateFlow<String> = userPrefsRepo.emailOtpProviderFlow
-  val emailOtpApiKey: StateFlow<String> = userPrefsRepo.emailOtpApiKeyFlow
-  val emailOtpWebhookUrl: StateFlow<String> = userPrefsRepo.emailOtpWebhookUrlFlow
-  val emailOtpSenderEmail: StateFlow<String> = userPrefsRepo.emailOtpSenderEmailFlow
-
-  fun setEmailOtpProvider(provider: String) {
-    userPrefsRepo.setEmailOtpProvider(provider)
-  }
-
-  fun setEmailOtpApiKey(apiKey: String) {
-    userPrefsRepo.setEmailOtpApiKey(apiKey)
-  }
-
-  fun setEmailOtpWebhookUrl(url: String) {
-    userPrefsRepo.setEmailOtpWebhookUrl(url)
-  }
-
-  fun setEmailOtpSenderEmail(sender: String) {
-    userPrefsRepo.setEmailOtpSenderEmail(sender)
-  }
 
   fun setLanguage(lang: AppLanguage) {
     userPrefsRepo.setLanguage(lang)
