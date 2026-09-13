@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Car Hisab</string>
-</resources<string name="default_web_client_id">479721377921-nnmili59ni7a211qd5ahbshbu8rd4nnn.apps.googleusercontent.com.apps.googleusercontent.com</string>
->
+    <string name="default_web_client_id">479721377921-nnmili59ni7a211qd5ahbshbu8rd4nnn.apps.googleusercontent.com</string>
+</resources>
