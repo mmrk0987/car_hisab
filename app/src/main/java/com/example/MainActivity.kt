@@ -340,6 +340,9 @@ class MainActivity : FragmentActivity() {
                     viewModel.checkAndPerformSilentAutoRestore(context)
                     viewModel.navigateTo(AppScreen.DASHBOARD)
                   },
+                  onGoogleAuthSuccess = { email, name ->
+                    viewModel.onGoogleAuthSuccess(email, name)
+                  },
                   onSignUpSuccess = { email, phone ->
                     viewModel.updateFullProfile(
                       nameBangla = profile.driverNameBangla,
