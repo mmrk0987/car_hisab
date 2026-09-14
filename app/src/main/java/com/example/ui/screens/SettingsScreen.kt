@@ -34,7 +34,6 @@ import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
-import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DateRange
@@ -129,7 +128,6 @@ fun SettingsScreen(
   var adminSelectedDurationDays by remember { mutableStateOf(30) }
   var generatedResultKey by remember { mutableStateOf("") }
 
-  var showRestoreConfirmDialog by remember { mutableStateOf(false) }
   val photoPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia()
   ) { uri: Uri? ->
@@ -659,7 +657,7 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Card 6: GOOGLE DRIVE CLOUD BACKUP
+      // Card 6: ANDROID AUTO BACKUP STATUS
       Card(
         modifier = Modifier
           .fillMaxWidth()
@@ -701,19 +699,14 @@ fun SettingsScreen(
 
             Column {
               Text(
-                text = if (language == AppLanguage.BANGLA) "ড্রাইভ ব্যাকআপ ও রিস্টোর" else "Drive Backup & Restore",
+                text = if (language == AppLanguage.BANGLA) "অটো ব্যাকআপ স্ট্যাটাস" else "Auto Backup Status",
                 fontSize = 14.5.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
               )
               Spacer(modifier = Modifier.height(3.dp))
               Text(
-                text = if (lastBackupTime > 0) {
-                  val dateStr = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.US).format(java.util.Date(lastBackupTime))
-                  if (language == AppLanguage.BANGLA) "সর্বশেষ ব্যাকআপ: $dateStr" else "Last backup: $dateStr"
-                } else {
-                  if (language == AppLanguage.BANGLA) "গুগল ড্রাইভে ১০০% নিরাপদ ক্লাউড সংরক্ষণ" else "100% Secure cloud data sync"
-                },
+                text = if (language == AppLanguage.BANGLA) "অটো ব্যাকআপ চালু আছে (গুগল ড্রাইভে স্বয়ংক্রিয়)" else "Auto Backup enabled (Automatic via Google)",
                 fontSize = 12.sp,
                 color = accentColor,
                 fontWeight = FontWeight.Medium
@@ -803,7 +796,7 @@ fun SettingsScreen(
         }
         Spacer(modifier = Modifier.height(5.dp))
         Text(
-          text = if (language == AppLanguage.BANGLA) "সংস্করণ v${BuildConfig.VERSION_NAME} • নিরাপদ ও গুগল ড্রাইভে সংরক্ষিত" else "Version ${BuildConfig.VERSION_NAME} • Cloud synced with Google Drive",
+          text = if (language == AppLanguage.BANGLA) "সংস্করণ v${BuildConfig.VERSION_NAME} • নিরাপদ ও অটো ব্যাকআপ সক্রিয়" else "Version ${BuildConfig.VERSION_NAME} • Android Auto Backup Enabled",
           fontSize = 11.sp,
           color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
           modifier = Modifier
@@ -986,6 +979,7 @@ fun SettingsScreen(
             }
           }
         )
+      }
     }
 
     // Edit Profile Dialog
@@ -1250,62 +1244,6 @@ fun SettingsScreen(
         }
       )
     }
-
-    // Restore Confirm Dialog
-    if (showRestoreConfirmDialog) {
-      AlertDialog(
-        onDismissRequest = { showRestoreConfirmDialog = false },
-        containerColor = MaterialTheme.colorScheme.surface,
-        icon = {
-          Icon(
-            imageVector = Icons.Default.CloudDownload,
-            contentDescription = null,
-            tint = accentColor,
-            modifier = Modifier.size(32.dp)
-          )
-        },
-        title = {
-          Text(
-            text = if (language == AppLanguage.BANGLA) "গুগল ড্রাইভ থেকে রিস্টোর করবেন?" else "Restore from Google Drive?",
-            fontWeight = FontWeight.Bold,
-            fontSize = 18.sp,
-            color = MaterialTheme.colorScheme.onSurface
-          )
-        },
-        text = {
-          Text(
-            text = if (language == AppLanguage.BANGLA)
-              "আপনার গুগল ড্রাইভে সংরক্ষিত ট্রিপ ও হিসাবের ফাইল থেকে সমস্ত ডাটা অ্যাপে রিস্টোর করা হবে। আপনি কি এগিয়ে যেতে চান?"
-            else
-              "Your accounting records from Google Drive backup will be restored into the app. Do you want to proceed?",
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
-        },
-        confirmButton = {
-          Button(
-            onClick = {
-              showRestoreConfirmDialog = false
-              onGoogleDriveRestore(null)
-            },
-            colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-            shape = RoundedCornerShape(10.dp)
-          ) {
-            Text(
-              if (language == AppLanguage.BANGLA) "হ্যাঁ, রিস্টোর করুন" else "Yes, Restore",
-              color = if (isDark) Color(0xFF022B1E) else Color.White,
-              fontWeight = FontWeight.Bold
-            )
-          }
-        },
-        dismissButton = {
-          TextButton(onClick = { showRestoreConfirmDialog = false }) {
-            Text(if (language == AppLanguage.BANGLA) "বাতিল" else "Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-          }
-        }
-      )
-    }
-  }
   }
 }
 

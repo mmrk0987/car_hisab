@@ -63,7 +63,6 @@ import com.example.ui.screens.AddTripScreen
 import com.example.ui.screens.AllTripsScreen
 import com.example.ui.screens.BookingsScreen
 import com.example.ui.screens.DashboardScreen
-import com.example.ui.screens.DriveBackupScreen
 import com.example.ui.screens.LanguageSelectScreen
 import com.example.ui.screens.LoginScreen
 import com.example.ui.screens.NidVerifyScreen
@@ -88,14 +87,8 @@ class MainActivity : FragmentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
 
-    // Initialize notification channel and schedule Thursday 6 PM reminder
     com.example.receiver.WeeklyBackupReminderReceiver.createNotificationChannel(this)
     com.example.receiver.WeeklyBackupReminderReceiver.scheduleWeeklyBackupReminder(this)
-
-    // Handle deep navigation from notification
-    if (intent?.getBooleanExtra("NAVIGATE_TO_DRIVE_BACKUP", false) == true) {
-      viewModel.navigateTo(AppScreen.DRIVE_BACKUP_SETTINGS)
-    }
 
     setContent {
       val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -105,7 +98,6 @@ class MainActivity : FragmentActivity() {
       val context = LocalContext.current
 
       MyApplicationTheme(themeMode = themeMode) {
-        // Back press handling
         BackHandler(enabled = currentScreen != AppScreen.SPLASH && currentScreen != AppScreen.DASHBOARD) {
           when (currentScreen) {
             AppScreen.LANGUAGE_SELECT -> viewModel.navigateTo(AppScreen.SPLASH)
@@ -113,7 +105,6 @@ class MainActivity : FragmentActivity() {
             AppScreen.PROFILE_SETUP -> viewModel.navigateTo(AppScreen.LOGIN)
             AppScreen.NID_VERIFY -> viewModel.navigateTo(AppScreen.PROFILE_SETUP)
             AppScreen.LANGUAGE_SETTINGS,
-            AppScreen.DRIVE_BACKUP_SETTINGS,
             AppScreen.THEME_SETTINGS -> viewModel.navigateTo(AppScreen.SETTINGS)
             AppScreen.ADD_TRIP, AppScreen.ALL_TRIPS ->
               viewModel.navigateTo(AppScreen.DASHBOARD)
@@ -132,7 +123,6 @@ class MainActivity : FragmentActivity() {
             currentScreen != AppScreen.PROFILE_SETUP &&
             currentScreen != AppScreen.NID_VERIFY &&
             currentScreen != AppScreen.LANGUAGE_SETTINGS &&
-            currentScreen != AppScreen.DRIVE_BACKUP_SETTINGS &&
             currentScreen != AppScreen.THEME_SETTINGS
 
         Scaffold(
@@ -153,14 +143,14 @@ class MainActivity : FragmentActivity() {
                         }
                         AppScreen.ADD_TRIP -> when (language) {
                           AppLanguage.BANGLA -> "নতুন ট্রিপ যোগ"
-                          AppLanguage.HINDI -> "नया ট্রিপ जोड़ें"
+                          AppLanguage.HINDI -> "नया ट्रिप जोड़ें"
                           AppLanguage.TAMIL -> "புதிய பயணம் சேர்க்க"
-                          AppLanguage.URDU -> "نیا ٹرپ شامل کریں"
+                          AppLanguage.URDU -> "نیاٹرپ شامل کریں"
                           else -> "Add New Trip"
                         }
                         AppScreen.SETTINGS -> when (language) {
                           AppLanguage.BANGLA -> "সেটিংস"
-                          AppLanguage.HINDI -> "सेटिंग्स"
+                          AppLanguage.HINDI -> "সেটিংড"
                           AppLanguage.TAMIL -> "அமைப்புகள்"
                           AppLanguage.URDU -> "سیٹنگز"
                           else -> "Settings"
@@ -174,7 +164,7 @@ class MainActivity : FragmentActivity() {
                         }
                         AppScreen.BOOKINGS -> when (language) {
                           AppLanguage.BANGLA -> "অগ্রিম বুকিং"
-                          AppLanguage.HINDI -> "अग्रिम बुकिंग"
+                          AppLanguage.HINDI -> "অগ্রিম বুকিং"
                           AppLanguage.TAMIL -> "முன்பதிவுகள்"
                           AppLanguage.URDU -> "ایڈوانس بکنگ"
                           else -> "Bookings"
@@ -191,7 +181,6 @@ class MainActivity : FragmentActivity() {
                   IconButton(
                     onClick = {
                       if (currentScreen == AppScreen.LANGUAGE_SETTINGS ||
-                          currentScreen == AppScreen.DRIVE_BACKUP_SETTINGS ||
                           currentScreen == AppScreen.THEME_SETTINGS) {
                         viewModel.navigateTo(AppScreen.SETTINGS)
                       } else {
@@ -225,7 +214,7 @@ class MainActivity : FragmentActivity() {
                     Text(
                       text = when (language) {
                         AppLanguage.BANGLA -> "ড্যাশবোর্ড"
-                        AppLanguage.HINDI -> "डैशबोर्ड"
+                        AppLanguage.HINDI -> "ড্যাশবোর্ড"
                         AppLanguage.TAMIL -> "டாஷ்போர்டு"
                         AppLanguage.URDU -> "ڈیش بورڈ"
                         else -> "Dashboard"
@@ -246,7 +235,7 @@ class MainActivity : FragmentActivity() {
                     Text(
                       text = when (language) {
                         AppLanguage.BANGLA -> "ট্রিপ যোগ"
-                        AppLanguage.HINDI -> "ट्रिप जोड़ें"
+                        AppLanguage.HINDI -> "ট্রিপ जोड़ें"
                         AppLanguage.TAMIL -> "பயணம் சேர்க்க"
                         AppLanguage.URDU -> "ٹرپ شامل کریں"
                         else -> "Add Trip"
@@ -288,7 +277,7 @@ class MainActivity : FragmentActivity() {
                     Text(
                       text = when (language) {
                         AppLanguage.BANGLA -> "সেটিংস"
-                        AppLanguage.HINDI -> "सेटिंग्स"
+                        AppLanguage.HINDI -> "সেটিংড"
                         AppLanguage.TAMIL -> "அமைப்புகள்"
                         AppLanguage.URDU -> "سیٹنگز"
                         else -> "Settings"
@@ -337,13 +326,11 @@ class MainActivity : FragmentActivity() {
                   savedRememberEmail = profile.rememberEmail,
                   onLoginSuccess = { email, remember ->
                     viewModel.updateRememberEmail(email, remember)
-                    viewModel.checkAndPerformSilentAutoRestore(context)
                     viewModel.navigateTo(AppScreen.DASHBOARD)
                   },
                   onBiometricLogin = { onSuccess, onError ->
                     viewModel.loginWithBiometric(
                       onSuccess = { email ->
-                        viewModel.checkAndPerformSilentAutoRestore(context)
                         viewModel.navigateTo(AppScreen.DASHBOARD)
                         onSuccess(email)
                       },
@@ -653,10 +640,6 @@ class MainActivity : FragmentActivity() {
 
               AppScreen.SETTINGS -> {
                 val allTripsForExport by viewModel.allTrips.collectAsStateWithLifecycle()
-                val lastBackupTime by viewModel.lastBackupTime.collectAsStateWithLifecycle()
-                val lastBackupCount by viewModel.lastBackupCount.collectAsStateWithLifecycle()
-                val isBackingUp by viewModel.isBackingUp.collectAsStateWithLifecycle()
-                val isRestoring by viewModel.isRestoring.collectAsStateWithLifecycle()
                 val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
 
                 SettingsScreen(
@@ -664,14 +647,10 @@ class MainActivity : FragmentActivity() {
                   themeMode = themeMode,
                   profile = profile,
                   trips = allTripsForExport,
-                  lastBackupTime = lastBackupTime,
-                  lastBackupCount = lastBackupCount,
-                  isBackingUp = isBackingUp,
-                  isRestoring = isRestoring,
                   backupStatusMessage = backupStatusMessage,
                   onLanguageChange = { viewModel.setLanguage(it) },
                   onOpenLanguageSettings = { viewModel.navigateTo(AppScreen.LANGUAGE_SETTINGS) },
-                  onOpenDriveBackup = { viewModel.navigateTo(AppScreen.DRIVE_BACKUP_SETTINGS) },
+                  onOpenDriveBackup = { /* No-op or navigate */ },
                   onOpenThemeSettings = { viewModel.navigateTo(AppScreen.THEME_SETTINGS) },
                   onThemeModeChange = { viewModel.setThemeMode(it) },
                   onUpdateProfile = { cName, cModel, cNumber, dName, dPhone, dEmail ->
@@ -699,28 +678,6 @@ class MainActivity : FragmentActivity() {
                       trips = selectedTrips,
                       onSuccess = {
                         Toast.makeText(context, AppStrings.exportSuccess(language), Toast.LENGTH_SHORT).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onGoogleDriveBackup = {
-                    viewModel.performGoogleDriveBackup(
-                      context = context,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.backupSuccess(language, count), Toast.LENGTH_LONG).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onGoogleDriveRestore = {
-                    viewModel.performGoogleDriveRestore(
-                      context = context,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
                       },
                       onError = { err ->
                         Toast.makeText(context, err, Toast.LENGTH_LONG).show()
@@ -755,63 +712,6 @@ class MainActivity : FragmentActivity() {
                     viewModel.navigateTo(AppScreen.SETTINGS)
                   },
                   isFromSettings = true,
-                  onBack = {
-                    viewModel.navigateTo(AppScreen.SETTINGS)
-                  }
-                )
-              }
-
-              AppScreen.DRIVE_BACKUP_SETTINGS -> {
-                val lastBackupTime by viewModel.lastBackupTime.collectAsStateWithLifecycle()
-                val lastBackupCount by viewModel.lastBackupCount.collectAsStateWithLifecycle()
-                val isBackingUp by viewModel.isBackingUp.collectAsStateWithLifecycle()
-                val isRestoring by viewModel.isRestoring.collectAsStateWithLifecycle()
-                val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
-                val isWeeklyReminderEnabled by viewModel.isAutoWeeklyBackupReminderEnabled.collectAsStateWithLifecycle()
-
-                DriveBackupScreen(
-                  language = language,
-                  profile = profile,
-                  lastBackupTime = lastBackupTime,
-                  lastBackupCount = lastBackupCount,
-                  isBackingUp = isBackingUp,
-                  isRestoring = isRestoring,
-                  backupStatusMessage = backupStatusMessage,
-                  isWeeklyReminderEnabled = isWeeklyReminderEnabled,
-                  onToggleWeeklyReminder = { enabled ->
-                    viewModel.setAutoWeeklyBackupReminderEnabled(context, enabled)
-                    Toast.makeText(
-                      context,
-                      if (enabled) {
-                        if (language == AppLanguage.BANGLA) "বৃহস্পতিবার সন্ধ্যা ৬টায় নোটিফিকেশন চালু হয়েছে" else "Thursday 6 PM reminder enabled"
-                      } else {
-                        if (language == AppLanguage.BANGLA) "রিমাইন্ডার বন্ধ করা হয়েছে" else "Reminder disabled"
-                      },
-                      Toast.LENGTH_SHORT
-                    ).show()
-                  },
-                  onGoogleDriveBackup = {
-                    viewModel.performGoogleDriveBackup(
-                      context = context,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.backupSuccess(language, count), Toast.LENGTH_LONG).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onGoogleDriveRestore = {
-                    viewModel.performGoogleDriveRestore(
-                      context = context,
-                      onSuccess = { count ->
-                        Toast.makeText(context, AppStrings.restoreSuccess(language, count), Toast.LENGTH_LONG).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
                   onBack = {
                     viewModel.navigateTo(AppScreen.SETTINGS)
                   }
