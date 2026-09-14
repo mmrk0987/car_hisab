@@ -64,6 +64,14 @@ class SupabaseAuthManagerTest {
   }
 
   @Test
+  fun testSignInWithGoogleValidTokenFormat() = runBlocking {
+    val dummyToken = "header.payload.signature_mock_google_id_token_1234567890"
+    val result = SupabaseAuthManager.signInWithGoogle(idToken = dummyToken)
+    assertFalse(result.success) // Network mock failure expected in unit test environment
+    assertNotNull(result.message)
+  }
+
+  @Test
   fun testSignInWithGoogleBlankTokenFails() = runBlocking {
     val result = SupabaseAuthManager.signInWithGoogle(idToken = "   ")
     assertFalse(result.success)

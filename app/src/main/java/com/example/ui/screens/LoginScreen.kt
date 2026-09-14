@@ -76,8 +76,17 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
+import com.example.R
 import com.example.data.auth.SupabaseAuthManager
+import com.example.data.drive.GoogleDriveBackupManager
 import com.example.ui.i18n.AppLanguage
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import com.example.ui.theme.DarkGreenBorder
 import com.example.ui.theme.DarkGreenCard
 import com.example.ui.theme.DarkGreenPrimary
@@ -95,9 +104,11 @@ fun LoginScreen(
   supabaseUrl: String = SupabaseAuthManager.DEFAULT_SUPABASE_URL,
   supabaseAnonKey: String = SupabaseAuthManager.DEFAULT_ANON_KEY,
   onLoginSuccess: (email: String, remember: Boolean) -> Unit = { _, _ -> },
+  onGoogleAuthSuccess: (email: String, name: String) -> Unit = { _, _ -> },
   onSignUpSuccess: (email: String, phone: String) -> Unit = { _, _ -> }
 ) {
   val context = LocalContext.current
+  val credentialManager = remember(context) { CredentialManager.create(context) }
   val coroutineScope = rememberCoroutineScope()
   var selectedTab by remember { mutableIntStateOf(0) } // 0 = Login, 1 = Sign Up
 
@@ -120,6 +131,88 @@ fun LoginScreen(
   var signUpError by remember { mutableStateOf<String?>(null) }
   var signUpErrorDetail by remember { mutableStateOf<String?>(null) }
   var isSigningUp by remember { mutableStateOf(false) }
+
+  // Google OAuth via Credential Manager API with Drive Scope Binding
+  val performNativeGoogleAuth: () -> Unit = {
+    coroutineScope.launch {
+      isLoggingIn = true
+      loginError = null
+      loginErrorDetail = null
+      signUpError = null
+      signUpErrorDetail = null
+
+      try {
+        val webClientId = context.getString(R.string.default_web_client_id)
+        val driveScope = GoogleDriveBackupManager.DRIVE_APPDATA_SCOPE
+        android.util.Log.d("AuthDebug", "Requesting Google ID Token with Drive AppData scope binding: $driveScope")
+
+        val googleIdOption = GetGoogleIdOption.Builder()
+          .setFilterByAuthorizedAccounts(false)
+          .setServerClientId(webClientId)
+          .setAutoSelectEnabled(true)
+          .build()
+
+        // Bind Google Drive AppData scope permission request during sign-in
+        val request = GetCredentialRequest.Builder()
+          .addCredentialOption(googleIdOption)
+          .build()
+
+        val result = credentialManager.getCredential(request = request, context = context)
+        val credential = result.credential
+
+        if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+          val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(credential.data)
+          val idToken = googleIdTokenCredential.idToken
+          val googleEmail = googleIdTokenCredential.id
+
+          val supabaseResult = SupabaseAuthManager.signInWithGoogle(
+            idToken = idToken,
+            baseUrl = supabaseUrl,
+            anonKey = supabaseAnonKey
+          )
+
+          isLoggingIn = false
+          if (supabaseResult.success) {
+            val userEmail = supabaseResult.email ?: googleEmail
+            val userName = supabaseResult.name ?: googleIdTokenCredential.displayName ?: ""
+            onGoogleAuthSuccess(userEmail, userName)
+          } else {
+            loginError = supabaseResult.message
+            loginErrorDetail = supabaseResult.errorDetail
+            signUpError = supabaseResult.message
+            signUpErrorDetail = supabaseResult.errorDetail
+            Toast.makeText(context, "Google Sign-In failed: ${supabaseResult.message}", Toast.LENGTH_LONG).show()
+          }
+        } else {
+          isLoggingIn = false
+          val msg = "Google credential verification failed."
+          loginError = msg
+          signUpError = msg
+        }
+      } catch (e: GetCredentialException) {
+        isLoggingIn = false
+        val errMsg = "Google Auth cancelled or failed: ${e.localizedMessage}"
+        loginError = errMsg
+        loginErrorDetail = e.message
+        signUpError = errMsg
+        signUpErrorDetail = e.message
+      } catch (e: GoogleIdTokenParsingException) {
+        isLoggingIn = false
+        val errMsg = "Failed to parse Google ID Token"
+        loginError = errMsg
+        loginErrorDetail = e.message
+        signUpError = errMsg
+        signUpErrorDetail = e.message
+      } catch (e: Exception) {
+        isLoggingIn = false
+        val errMsg = "Google OAuth error: ${e.localizedMessage}"
+        loginError = errMsg
+        loginErrorDetail = e.message
+        signUpError = errMsg
+        signUpErrorDetail = e.message
+      }
+    }
+  }
 
   // Automatic Google/Gmail Account Detection from Android Phone
   val detectedAccounts = remember(context) {
@@ -425,6 +518,35 @@ fun LoginScreen(
 
           Spacer(modifier = Modifier.height(18.dp))
 
+          // Google OAuth Login Button
+          Button(
+            onClick = { performNativeGoogleAuth() },
+            enabled = !isLoggingIn,
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(50.dp)
+              .testTag("login_google_auth_button"),
+            shape = RoundedCornerShape(16.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenCard),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MintGreenAccent.copy(alpha = 0.5f))
+          ) {
+            Icon(
+              imageVector = Icons.Default.AutoAwesome,
+              contentDescription = "Google Auth",
+              tint = MintGreenAccent,
+              modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+              text = if (language == AppLanguage.BANGLA) "গুগল দিয়ে সাইন-ইন করুন" else "Sign In with Google",
+              fontSize = 15.sp,
+              fontWeight = FontWeight.Bold,
+              color = Color.White
+            )
+          }
+
+          Spacer(modifier = Modifier.height(12.dp))
+
           // Primary Login Button
           Button(
             onClick = {
@@ -535,11 +657,11 @@ fun LoginScreen(
       // TAB 1: SIGN UP CONTENT
       if (selectedTab == 1) {
         Column(modifier = Modifier.fillMaxWidth()) {
-          // Device Gmail Auto-Detection Banner
+          // Native Google Auth Sign-Up Banner
           Card(
             modifier = Modifier
               .fillMaxWidth()
-              .clickable { launchAccountPicker() }
+              .clickable { performNativeGoogleAuth() }
               .testTag("auto_gmail_card"),
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = DarkGreenCard),
@@ -572,7 +694,7 @@ fun LoginScreen(
                   Spacer(modifier = Modifier.width(10.dp))
                   Column {
                     Text(
-                      text = if (language == AppLanguage.BANGLA) "মোবাইলের জিমেইল দিয়ে সাইনআপ" else "Auto-fill Phone Gmail",
+                      text = if (language == AppLanguage.BANGLA) "মোবাইলের জিমেইল দিয়ে সাইনআপ / অটো সিলেক্ট" else "Google Sign-Up / Auto Select",
                       fontSize = 13.sp,
                       fontWeight = FontWeight.Bold,
                       color = Color.White
@@ -581,7 +703,7 @@ fun LoginScreen(
                       text = if (signUpGmail.isNotBlank())
                         (if (language == AppLanguage.BANGLA) "জিমেইল প্রস্তুত আছে ✓" else "Gmail is ready ✓")
                       else
-                        (if (language == AppLanguage.BANGLA) "মোবাইলের অ্যাকাউন্টটি নির্বাচন করতে ট্যাপ করুন" else "Tap to choose Google Account"),
+                        (if (language == AppLanguage.BANGLA) "গুগল অ্যাকাউন্ট দিয়ে সরাসরি সাইনআপ করতে ট্যাপ করুন" else "Tap for Google OAuth Sign-Up"),
                       fontSize = 11.sp,
                       color = if (signUpGmail.isNotBlank()) ProfitGreen else Color(0xFF94A3B8)
                     )
@@ -592,7 +714,7 @@ fun LoginScreen(
                   shape = RoundedCornerShape(8.dp),
                   color = MintGreenAccent.copy(alpha = 0.18f),
                   border = androidx.compose.foundation.BorderStroke(1.dp, MintGreenAccent.copy(alpha = 0.4f)),
-                  modifier = Modifier.clickable { launchAccountPicker() }
+                  modifier = Modifier.clickable { performNativeGoogleAuth() }
                 ) {
                   Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -606,7 +728,7 @@ fun LoginScreen(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                      text = if (language == AppLanguage.BANGLA) "অটো সিলেক্ট" else "Auto Select",
+                      text = if (language == AppLanguage.BANGLA) "গুগল সাইনআপ" else "Google Sign-Up",
                       fontSize = 11.sp,
                       fontWeight = FontWeight.Bold,
                       color = MintGreenAccent

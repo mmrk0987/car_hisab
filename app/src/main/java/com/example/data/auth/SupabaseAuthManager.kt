@@ -13,6 +13,8 @@ import java.util.concurrent.TimeUnit
 data class SupabaseAuthResult(
   val success: Boolean,
   val email: String? = null,
+  val name: String? = null,
+  val provider: String? = null,
   val accessToken: String? = null,
   val message: String,
   val errorDetail: String? = null
@@ -303,10 +305,16 @@ object SupabaseAuthManager {
         val accessToken = json.optString("access_token", "")
         val userObj = json.optJSONObject("user")
         val returnEmail = userObj?.optString("email", "") ?: ""
+        val userMetadata = userObj?.optJSONObject("user_metadata")
+        val returnName = userMetadata?.optString("full_name", userMetadata.optString("name", "")) ?: ""
+        val appMetadata = userObj?.optJSONObject("app_metadata")
+        val provider = appMetadata?.optString("provider", "google") ?: "google"
 
         SupabaseAuthResult(
           success = true,
           email = returnEmail,
+          name = returnName,
+          provider = provider,
           accessToken = accessToken,
           message = "Google দিয়ে সফলভাবে Supabase-এ লগইন হয়েছে!"
         )

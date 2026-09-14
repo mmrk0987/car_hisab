@@ -195,6 +195,26 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     )
   }
 
+  fun onGoogleAuthSuccess(email: String, name: String = "") {
+    val current = userProfile.value
+    val displayName = name.ifBlank { current.driverName.ifBlank { email.substringBefore("@") } }
+    val updatedProfile = current.copy(
+      driverEmail = email,
+      savedEmail = email,
+      rememberEmail = true,
+      driverName = displayName,
+      driverNameEnglish = if (current.driverNameEnglish.isBlank()) displayName else current.driverNameEnglish,
+      driverNameBangla = if (current.driverNameBangla.isBlank()) displayName else current.driverNameBangla,
+      isLoggedIn = true,
+      isProfileCompleted = true
+    )
+    userPrefsRepo.updateProfile(updatedProfile)
+    getApplication<Application>().applicationContext?.let { context ->
+      checkAndPerformSilentAutoRestore(context)
+    }
+    navigateTo(AppScreen.DASHBOARD)
+  }
+
   fun updateProfilePhoto(photoUri: String?) {
     val current = userProfile.value
     userPrefsRepo.updateProfile(
