@@ -249,9 +249,10 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     carNumber: String = userProfile.value.carNumber
   ) {
     val current = userProfile.value
+    val updatedName = if (nameBangla.isNotBlank()) nameBangla else nameEnglish
     userPrefsRepo.updateProfile(
       current.copy(
-        driverName = if (nameBangla.isNotBlank()) nameBangla else nameEnglish,
+        driverName = updatedName,
         driverNameBangla = nameBangla,
         driverNameEnglish = nameEnglish,
         birthDate = birthdate,
@@ -264,6 +265,14 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         isLoggedIn = true
       )
     )
+    viewModelScope.launch {
+      com.example.data.auth.SupabaseAuthManager.syncUserProfileToSupabase(
+        email = email,
+        dob = birthdate,
+        phone = phone,
+        name = updatedName
+      )
+    }
   }
 
   fun updateRememberEmail(email: String, remember: Boolean) {

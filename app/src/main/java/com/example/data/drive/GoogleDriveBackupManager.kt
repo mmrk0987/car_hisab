@@ -50,6 +50,25 @@ object GoogleDriveBackupManager {
     .build()
 
   /**
+   * Encrypts plaintext string to secure encrypted payload.
+   */
+  private fun encryptData(dataString: String): String {
+    return try {
+      val keyBytes = SECRET_KEY.toByteArray(Charsets.UTF_8)
+      val dataBytes = dataString.toByteArray(Charsets.UTF_8)
+      val encryptedBytes = ByteArray(dataBytes.size)
+      for (i in dataBytes.indices) {
+        encryptedBytes[i] = (dataBytes[i].toInt() xor keyBytes[i % keyBytes.size].toInt()).toByte()
+      }
+      val base64Encoded = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
+      "CARHISAB_SECURE_V1:$base64Encoded"
+    } catch (e: Exception) {
+      Log.e(TAG, "Encryption failed", e)
+      dataString
+    }
+  }
+
+  /**
    * Decrypts secure encrypted payload back to plaintext JSON if encrypted.
    */
   private fun decryptData(dataString: String): String {
@@ -204,7 +223,7 @@ object GoogleDriveBackupManager {
     root.put("bookingsCount", bookings.size)
     root.put("bookings", bookingsArray)
 
-    return root.toString(2)
+    return encryptData(root.toString(2))
   }
 
   /**

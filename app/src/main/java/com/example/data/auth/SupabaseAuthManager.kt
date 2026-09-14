@@ -411,6 +411,47 @@ object SupabaseAuthManager {
   }
 
   /**
+   * Sync user profile metadata (including date_of_birth) to Supabase profiles table
+   */
+  suspend fun syncUserProfileToSupabase(
+    email: String,
+    dob: String = "",
+    phone: String = "",
+    name: String = "",
+    baseUrl: String = DEFAULT_SUPABASE_URL,
+    anonKey: String = DEFAULT_ANON_KEY
+  ): Boolean = withContext(Dispatchers.IO) {
+    if (email.isBlank()) return@withContext false
+    try {
+      val rootUrl = cleanBaseUrl(baseUrl)
+      val endpoint = "$rootUrl/rest/v1/profiles"
+      val key = anonKey.ifBlank { DEFAULT_ANON_KEY }
+
+      val payload = JSONObject().apply {
+        put("email", email.trim().lowercase())
+        if (dob.isNotBlank()) put("date_of_birth", dob.trim())
+        if (phone.isNotBlank()) put("phone", phone.trim())
+        if (name.isNotBlank()) put("full_name", name.trim())
+      }
+
+      val request = Request.Builder()
+        .url(endpoint)
+        .addHeader("apikey", key)
+        .addHeader("Authorization", "Bearer $key")
+        .addHeader("Content-Type", "application/json")
+        .addHeader("Prefer", "resolution=merge-duplicates")
+        .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+        .build()
+
+      val response = httpClient.newCall(request).execute()
+      response.isSuccessful
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to sync profile to Supabase: ${e.message}")
+      false
+    }
+  }
+
+  /**
    * Reset Password by DOB via Supabase Edge Function reset-password-by-dob
    */
   suspend fun resetPasswordByDob(

@@ -111,9 +111,7 @@ class BackupRestoreTest {
     )
 
     assertNotNull(jsonString)
-    assertTrue("JSON string should contain app name", jsonString.contains("CarHisab"))
-    assertTrue("JSON string should contain driver name", jsonString.contains("Md. Mahfujur Rahman"))
-    assertTrue("JSON string should contain Dhaka to Gazipur", jsonString.contains("Dhaka to Gazipur"))
+    assertTrue("JSON string should be encrypted with CARHISAB_SECURE_V1: prefix", jsonString.startsWith("CARHISAB_SECURE_V1:"))
 
     val parsedPayload = GoogleDriveBackupManager.parseBackupPayload(jsonString)
 
