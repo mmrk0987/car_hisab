@@ -370,6 +370,8 @@ object SupabaseAuthManager {
           "এই ইমেইল দিয়ে ইতোমধ্যে একাউন্ট খোলা হয়েছে। লগইন করতে সাইন-ইন ট্যাবে যান।"
         msg.contains("Password should be at least", ignoreCase = true) ->
           "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।"
+        msg.contains("Error sending confirmation mail", ignoreCase = true) || msg.contains("sending configuration", ignoreCase = true) || errorCode.contains("over_email_send_rate_limit", ignoreCase = true) ->
+          "কনফার্মেশন ইমেইল পাঠাতে সমস্যা হচ্ছে (Supabase SMTP / Rate limit সমস্যা)। Supabase ড্যাশবোর্ডে 'Confirm Email' অপশনটি ডিজেবল করুন অথবা Custom SMTP সেটআপ করুন।"
         msg.isNotBlank() -> "Supabase Error: $msg"
         else -> "Supabase Error (HTTP $statusCode)"
       }
