@@ -1,13 +1,11 @@
 package com.example
 
-import com.example.data.drive.GoogleDriveBackupManager
-import com.example.data.model.BookingEntity
-import com.example.data.model.MobilServiceInfo
-import com.example.data.model.TripEntity
-import com.example.data.model.VehicleDocuments
-import com.example.data.repository.UserProfile
+import android.content.Context
 import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.db.AppDatabase
+import com.example.data.model.BookingEntity
+import com.example.data.model.TripEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -15,43 +13,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.xmlpull.v1.XmlPullParser
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class BackupRestoreTest {
-
-  private val testProfile = UserProfile(
-    carName = "Toyota Axio",
-    carModel = "2020 Hybrid",
-    carNumber = "Dhaka Metro GA-11-2233",
-    driverName = "Md. Mahfujur Rahman",
-    driverNameBangla = "মোঃ মাহফুজুর রহমান",
-    driverPhone = "+8801700000000",
-    driverEmail = "driver@example.com",
-    userUniqueKey = "CH-99999"
-  )
-
-  private val testDocuments = VehicleDocuments(
-    taxTokenExpiryMillis = 1750000000000L,
-    taxTokenNumber = "TT-123456",
-    fitnessExpiryMillis = 1750000000000L,
-    fitnessNumber = "FIT-654321",
-    routePermitExpiryMillis = 1750000000000L,
-    routePermitNumber = "RP-987654",
-    insuranceExpiryMillis = 1750000000000L,
-    insuranceNumber = "INS-456789",
-    drivingLicenseExpiryMillis = 1750000000000L,
-    drivingLicenseNumber = "DL-112233"
-  )
-
-  private val testMobilService = MobilServiceInfo(
-    currentOdometerKm = 45200.0,
-    lastMobilChangeKm = 42000.0,
-    mobilChangeIntervalKm = 3000.0,
-    lastMobilChangeDateMillis = 1720000000000L,
-    mobilBrandGrade = "Mobil 1 5W-30",
-    generalNotes = "Next filter replacement at 48000 km"
-  )
 
   private val testTrips = listOf(
     TripEntity(
@@ -101,111 +67,45 @@ class BackupRestoreTest {
   )
 
   @Test
-  fun testSerializeAndParseBackupJson() {
-    val jsonString = GoogleDriveBackupManager.serializeBackupJson(
-      trips = testTrips,
-      profile = testProfile,
-      documents = testDocuments,
-      mobilService = testMobilService,
-      bookings = testBookings
-    )
+  fun testAutoBackupRulesXmlIncludesDatabaseAndSharedPref() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val parser = context.resources.getXml(R.xml.backup_rules)
 
-    assertNotNull(jsonString)
-    assertTrue("JSON string should contain app name", jsonString.contains("CarHisab"))
-    assertTrue("JSON string should contain driver name", jsonString.contains("Md. Mahfujur Rahman"))
-    assertTrue("JSON string should contain Dhaka to Gazipur", jsonString.contains("Dhaka to Gazipur"))
+    var hasDatabaseInclude = false
+    var hasSharedPrefInclude = false
+    var hasCacheExclude = false
 
-    val parsedPayload = GoogleDriveBackupManager.parseBackupPayload(jsonString)
+    var eventType = parser.eventType
+    while (eventType != XmlPullParser.END_DOCUMENT) {
+      if (eventType == XmlPullParser.START_TAG) {
+        val tagName = parser.name
+        val domain = parser.getAttributeValue(null, "domain")
+        val path = parser.getAttributeValue(null, "path")
 
-    assertNotNull(parsedPayload)
-    assertEquals(2, parsedPayload.trips.size)
-    assertEquals(1, parsedPayload.bookings.size)
+        if (tagName == "include" && domain == "database" && path == "car_hisab_database") {
+          hasDatabaseInclude = true
+        }
+        if (tagName == "include" && domain == "sharedpref") {
+          hasSharedPrefInclude = true
+        }
+        if (tagName == "exclude" && domain == "cache") {
+          hasCacheExclude = true
+        }
+      }
+      eventType = parser.next()
+    }
 
-    val restoredTrip = parsedPayload.trips.first { it.id == 101L }
-    assertEquals("Dhaka to Gazipur", restoredTrip.place)
-    assertEquals(2500.0, restoredTrip.rent, 0.01)
-    assertEquals(2000.0, restoredTrip.profit, 0.01)
-
-    val restoredBooking = parsedPayload.bookings.first { it.id == 501L }
-    assertEquals("Karim Ahmed", restoredBooking.passengerName)
-    assertEquals(15000.0, restoredBooking.totalFare, 0.01)
-
-    assertNotNull(parsedPayload.profile)
-    assertEquals("Toyota Axio", parsedPayload.profile?.carName)
-    assertEquals("Dhaka Metro GA-11-2233", parsedPayload.profile?.carNumber)
-
-    assertNotNull(parsedPayload.documents)
-    assertEquals("TT-123456", parsedPayload.documents?.taxTokenNumber)
-
-    assertNotNull(parsedPayload.mobilService)
-    assertEquals(45200.0, parsedPayload.mobilService?.currentOdometerKm ?: 0.0, 0.01)
-    assertEquals("Mobil 1 5W-30", parsedPayload.mobilService?.mobilBrandGrade)
+    assertTrue("backup_rules.xml must include car_hisab_database", hasDatabaseInclude)
+    assertTrue("backup_rules.xml must include sharedpref", hasSharedPrefInclude)
+    assertTrue("backup_rules.xml must exclude cache", hasCacheExclude)
   }
 
   @Test
-  fun testCorruptedJsonDoesNotCrash() {
-    val invalidJson = "{ corrupt_json_content: [unclosed "
+  fun testDatabaseTransactionalOperations() = kotlinx.coroutines.test.runTest {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = AppDatabase.getDatabase(context)
 
-    val parsedPayload = GoogleDriveBackupManager.parseBackupPayload(invalidJson)
-
-    assertNotNull(parsedPayload)
-    assertTrue("Trips list should be empty for corrupted JSON", parsedPayload.trips.isEmpty())
-    assertTrue("Bookings list should be empty for corrupted JSON", parsedPayload.bookings.isEmpty())
-  }
-
-  @Test
-  fun testEmptyJsonReturnsEmptyPayloadWithoutCrashing() {
-    val emptyJson = "{}"
-
-    val parsedPayload = GoogleDriveBackupManager.parseBackupPayload(emptyJson)
-
-    assertNotNull(parsedPayload)
-    assertTrue(parsedPayload.trips.isEmpty())
-    assertTrue(parsedPayload.bookings.isEmpty())
-  }
-
-  @Test
-  fun testAppDataBackupAndRestore() {
-    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-    val jsonString = GoogleDriveBackupManager.serializeBackupJson(
-      trips = testTrips,
-      profile = testProfile,
-      documents = testDocuments,
-      mobilService = testMobilService,
-      bookings = testBookings
-    )
-
-    val backupSuccess = GoogleDriveBackupManager.backupToAppDataFolder(
-      context = context,
-      jsonContent = jsonString
-    )
-    assertTrue("AppData backup should succeed", backupSuccess)
-
-    val restoredContent = GoogleDriveBackupManager.restoreFromAppDataFolder(context = context)
-    assertNotNull("Restored AppData content should not be null", restoredContent)
-
-    val restoredPayload = GoogleDriveBackupManager.parseBackupPayload(restoredContent!!)
-    assertEquals(2, restoredPayload.trips.size)
-    assertEquals(1, restoredPayload.bookings.size)
-    assertEquals("Md. Mahfujur Rahman", restoredPayload.profile?.driverName)
-  }
-
-  @Test
-  fun testDatabaseTransactionalRestore() = kotlinx.coroutines.test.runTest {
-    val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-    val db = com.example.data.db.AppDatabase.getDatabase(context)
-
-    // Pre-populate with old dummy data
-    val oldTrip = TripEntity(id = 1L, dateString = "01 Jan 2026", place = "Old Trip", rent = 500.0, gratuity = 0.0, maintenanceCost = 0.0, income = 500.0, profit = 500.0)
-    db.tripDao().insertTrip(oldTrip)
-
-    val oldBooking = BookingEntity(id = 1L, passengerName = "Old Passenger", passengerPhone = "0000", pickupLocation = "A", dropLocation = "B", tripDateMillis = 1000L, tripDateString = "01 Jan 2026", totalFare = 1000.0)
-    db.bookingDao().insertBooking(oldBooking)
-
-    assertEquals(1, db.tripDao().getAllTripsSnapshot().size)
-    assertEquals(1, db.bookingDao().getAllBookingsSnapshot().size)
-
-    // Perform transactional restore with testTrips and testBookings
+    // Clear old data
     db.withTransaction {
       db.tripDao().deleteAllTrips()
       db.bookingDao().deleteAllBookings()
@@ -218,8 +118,6 @@ class BackupRestoreTest {
 
     assertEquals(2, restoredTrips.size)
     assertEquals(1, restoredBookings.size)
-
-    assertTrue("Old trip should be replaced", restoredTrips.none { it.place == "Old Trip" })
     assertTrue("New trips should contain Dhaka to Gazipur", restoredTrips.any { it.place == "Dhaka to Gazipur" })
   }
 }

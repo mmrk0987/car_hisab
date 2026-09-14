@@ -82,7 +82,6 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialException
 import com.example.R
 import com.example.data.auth.SupabaseAuthManager
-import com.example.data.drive.GoogleDriveBackupManager
 import com.example.ui.i18n.AppLanguage
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -143,7 +142,7 @@ fun LoginScreen(
   var signUpErrorDetail by remember { mutableStateOf<String?>(null) }
   var isSigningUp by remember { mutableStateOf(false) }
 
-  // Google OAuth via Credential Manager API with Drive Scope Binding
+  // Google OAuth via Credential Manager API
   val performNativeGoogleAuth: () -> Unit = {
     coroutineScope.launch {
       isLoggingIn = true
@@ -154,8 +153,6 @@ fun LoginScreen(
 
       try {
         val webClientId = context.getString(R.string.default_web_client_id)
-        val driveScope = GoogleDriveBackupManager.DRIVE_APPDATA_SCOPE
-        android.util.Log.d("AuthDebug", "Requesting Google ID Token with Drive AppData scope binding: $driveScope")
 
         val googleIdOption = GetGoogleIdOption.Builder()
           .setFilterByAuthorizedAccounts(false)
@@ -163,7 +160,6 @@ fun LoginScreen(
           .setAutoSelectEnabled(true)
           .build()
 
-        // Bind Google Drive AppData scope permission request during sign-in
         val request = GetCredentialRequest.Builder()
           .addCredentialOption(googleIdOption)
           .build()

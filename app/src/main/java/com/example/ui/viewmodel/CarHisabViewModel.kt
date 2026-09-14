@@ -5,11 +5,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.room.withTransaction
 import com.example.data.db.AppDatabase
-import com.example.data.drive.GoogleDriveBackupManager
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import com.example.data.export.ExportFormat
 import com.example.data.export.ExportManager
 import com.example.data.model.BookingEntity
@@ -24,7 +20,6 @@ import com.example.data.repository.TripRepository
 import com.example.data.repository.UserProfile
 import com.example.data.repository.UserPreferencesRepository
 import com.example.ui.i18n.AppLanguage
-import com.example.worker.AutoBackupWorker
 import com.example.ui.theme.AppThemeMode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,7 +46,6 @@ enum class AppScreen {
   SUBSCRIPTION,
   SETTINGS,
   LANGUAGE_SETTINGS,
-  DRIVE_BACKUP_SETTINGS,
   THEME_SETTINGS,
   DOCUMENTS_SERVICES,
   BOOKINGS
@@ -83,52 +77,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch {
       tripRepo.clearPassengerNamesFromTrips()
       bookingRepo.deleteDemoBookings()
-      AutoBackupWorker.schedulePeriodicBackup(application)
-      performSilentAutoRestoreCheck(application)
-    }
-  }
-
-  fun checkAndPerformSilentAutoRestore(context: Context) {
-    viewModelScope.launch {
-      performSilentAutoRestoreCheck(context)
-    }
-  }
-
-  private suspend fun performSilentAutoRestoreCheck(context: Context) = withContext(Dispatchers.IO) {
-    try {
-      val currentTrips = tripRepo.getAllTripsSnapshot()
-      val currentBookings = bookingRepo.getAllBookingsSnapshot()
-      if (currentTrips.isEmpty() && currentBookings.isEmpty()) {
-        val rawContent = GoogleDriveBackupManager.restoreFromAppDataFolder(context)
-        if (!rawContent.isNullOrBlank()) {
-          val payload = GoogleDriveBackupManager.parseBackupPayload(rawContent)
-          if (payload.trips.isNotEmpty() || payload.bookings.isNotEmpty() || payload.profile != null) {
-            val db = AppDatabase.getDatabase(context)
-            db.withTransaction {
-              db.tripDao().deleteAllTrips()
-              db.bookingDao().deleteAllBookings()
-              if (payload.trips.isNotEmpty()) {
-                db.tripDao().insertTrips(payload.trips)
-              }
-              if (payload.bookings.isNotEmpty()) {
-                db.bookingDao().insertBookings(payload.bookings)
-              }
-            }
-            payload.profile?.let { userPrefsRepo.updateProfile(it) }
-            payload.documents?.let { userPrefsRepo.updateDocuments(it) }
-            payload.mobilService?.let { userPrefsRepo.updateMobilService(it) }
-
-            val count = payload.trips.size
-            val now = System.currentTimeMillis()
-            userPrefsRepo.setLastDriveBackupTime(now)
-            userPrefsRepo.setLastBackupTripCount(count)
-            _lastBackupTime.value = now
-            _lastBackupCount.value = count
-            _backupStatusMessage.value = "Silently restored $count trips from AppData"
-          }
-        }
-      }
-    } catch (_: Exception) {
     }
   }
 
@@ -209,9 +157,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       isProfileCompleted = true
     )
     userPrefsRepo.updateProfile(updatedProfile)
-    getApplication<Application>().applicationContext?.let { context ->
-      checkAndPerformSilentAutoRestore(context)
-    }
     navigateTo(AppScreen.DASHBOARD)
   }
 
@@ -481,7 +426,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         notes = notes.trim()
       )
       bookingRepo.insertBooking(booking)
-      AutoBackupWorker.triggerOneTimeBackup(getApplication())
     }
   }
 
@@ -980,7 +924,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
 
     viewModelScope.launch {
       tripRepo.insertTrip(newTrip)
-      AutoBackupWorker.triggerOneTimeBackup(getApplication())
       _tripPlace.value = ""
       _rentInput.value = ""
       _gratuityInput.value = ""
@@ -997,7 +940,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   fun deleteTrip(trip: TripEntity) {
     viewModelScope.launch {
       tripRepo.deleteTrip(trip)
-      AutoBackupWorker.triggerOneTimeBackup(getApplication())
     }
   }
 
@@ -1007,7 +949,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       val profit = income - trip.maintenanceCost
       val updated = trip.copy(income = income, profit = profit)
       tripRepo.updateTrip(updated)
-      AutoBackupWorker.triggerOneTimeBackup(getApplication())
       onSuccess()
     }
   }
@@ -1060,7 +1001,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
-  // Storage Access Framework (SAF) Backup & Restore
   val isAutoWeeklyBackupReminderEnabled: StateFlow<Boolean> = userPrefsRepo.autoWeeklyBackupReminderFlow
 
   fun setAutoWeeklyBackupReminderEnabled(context: Context, enabled: Boolean) {
@@ -1072,145 +1012,10 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
-  private val _lastBackupTime = MutableStateFlow(userPrefsRepo.getLastDriveBackupTime())
-  val lastBackupTime: StateFlow<Long> = _lastBackupTime.asStateFlow()
-
-  private val _lastBackupCount = MutableStateFlow(userPrefsRepo.getLastBackupTripCount())
-  val lastBackupCount: StateFlow<Int> = _lastBackupCount.asStateFlow()
-
-  private val _isBackingUp = MutableStateFlow(false)
-  val isBackingUp: StateFlow<Boolean> = _isBackingUp.asStateFlow()
-
-  private val _isRestoring = MutableStateFlow(false)
-  val isRestoring: StateFlow<Boolean> = _isRestoring.asStateFlow()
-
-  private val _backupStatusMessage = MutableStateFlow<String?>(null)
+  private val _backupStatusMessage = MutableStateFlow<String?>("অটো ব্যাকআপ চালু আছে (গুগল ড্রাইভে স্বয়ংক্রিয়)")
   val backupStatusMessage: StateFlow<String?> = _backupStatusMessage.asStateFlow()
 
   fun clearBackupStatusMessage() {
     _backupStatusMessage.value = null
-  }
-
-  fun performGoogleDriveBackup(
-    context: Context,
-    accessToken: String? = null,
-    onSuccess: (count: Int) -> Unit = {},
-    onError: (String) -> Unit = {}
-  ) {
-    viewModelScope.launch(Dispatchers.IO) {
-      _isBackingUp.value = true
-      try {
-        val trips = tripRepo.getAllTripsSnapshot()
-        val bookings = bookingRepo.getAllBookingsSnapshot()
-        val profile = userProfile.value
-        val documents = vehicleDocuments.value
-        val mobilService = mobilServiceInfo.value
-
-        val jsonString = GoogleDriveBackupManager.serializeBackupJson(
-          trips = trips,
-          profile = profile,
-          documents = documents,
-          mobilService = mobilService,
-          bookings = bookings
-        )
-
-        val success = GoogleDriveBackupManager.backupToAppDataFolder(
-          context = context,
-          jsonContent = jsonString,
-          accessToken = accessToken
-        )
-
-        if (success) {
-          val now = System.currentTimeMillis()
-          userPrefsRepo.setLastDriveBackupTime(now)
-          userPrefsRepo.setLastBackupTripCount(trips.size)
-          _lastBackupTime.value = now
-          _lastBackupCount.value = trips.size
-          _backupStatusMessage.value = "Automatic AppData backup created: ${trips.size} trips"
-          AutoBackupWorker.triggerOneTimeBackup(context)
-          AutoBackupWorker.schedulePeriodicBackup(context)
-          withContext(Dispatchers.Main) {
-            onSuccess(trips.size)
-          }
-        } else {
-          withContext(Dispatchers.Main) {
-            onError("Failed writing automatic backup payload")
-          }
-        }
-      } catch (e: Exception) {
-        withContext(Dispatchers.Main) {
-          onError(e.localizedMessage ?: "Backup failed")
-        }
-      } finally {
-        _isBackingUp.value = false
-      }
-    }
-  }
-
-  fun performGoogleDriveRestore(
-    context: Context,
-    accessToken: String? = null,
-    onSuccess: (count: Int) -> Unit = {},
-    onError: (String) -> Unit = {}
-  ) {
-    viewModelScope.launch(Dispatchers.IO) {
-      _isRestoring.value = true
-      try {
-        val rawContent = GoogleDriveBackupManager.restoreFromAppDataFolder(
-          context = context,
-          accessToken = accessToken
-        )
-        if (rawContent.isNullOrBlank()) {
-          _isRestoring.value = false
-          withContext(Dispatchers.Main) {
-            onError("No automatic backup found in hidden AppData folder")
-          }
-          return@launch
-        }
-
-        val payload = GoogleDriveBackupManager.parseBackupPayload(rawContent)
-        if (payload.trips.isEmpty() && payload.bookings.isEmpty() && payload.profile == null) {
-          _isRestoring.value = false
-          withContext(Dispatchers.Main) {
-            onError("Invalid backup file or no data found in AppData folder")
-          }
-          return@launch
-        }
-
-        val db = AppDatabase.getDatabase(context)
-        db.withTransaction {
-          db.tripDao().deleteAllTrips()
-          db.bookingDao().deleteAllBookings()
-          if (payload.trips.isNotEmpty()) {
-            db.tripDao().insertTrips(payload.trips)
-          }
-          if (payload.bookings.isNotEmpty()) {
-            db.bookingDao().insertBookings(payload.bookings)
-          }
-        }
-
-        payload.profile?.let { userPrefsRepo.updateProfile(it) }
-        payload.documents?.let { userPrefsRepo.updateDocuments(it) }
-        payload.mobilService?.let { userPrefsRepo.updateMobilService(it) }
-
-        val count = payload.trips.size
-        val now = System.currentTimeMillis()
-        userPrefsRepo.setLastDriveBackupTime(now)
-        userPrefsRepo.setLastBackupTripCount(count)
-        _lastBackupTime.value = now
-        _lastBackupCount.value = count
-
-        _backupStatusMessage.value = "Restored $count trips automatically from AppData"
-        withContext(Dispatchers.Main) {
-          onSuccess(count)
-        }
-      } catch (e: Exception) {
-        withContext(Dispatchers.Main) {
-          onError(e.localizedMessage ?: "Restore failed")
-        }
-      } finally {
-        _isRestoring.value = false
-      }
-    }
   }
 }

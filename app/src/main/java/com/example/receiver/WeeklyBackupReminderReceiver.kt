@@ -18,7 +18,6 @@ class WeeklyBackupReminderReceiver : BroadcastReceiver() {
 
   override fun onReceive(context: Context, intent: Intent?) {
     if (intent?.action == Intent.ACTION_BOOT_COMPLETED) {
-      // Re-schedule alarm after reboot if enabled
       val userPrefs = UserPreferencesRepository(context)
       if (userPrefs.isAutoWeeklyBackupReminderEnabled()) {
         scheduleWeeklyBackupReminder(context)
@@ -33,7 +32,6 @@ class WeeklyBackupReminderReceiver : BroadcastReceiver() {
 
     showBackupNotification(context, userPrefs)
 
-    // Schedule next week's alarm
     scheduleWeeklyBackupReminder(context)
   }
 
@@ -44,8 +42,8 @@ class WeeklyBackupReminderReceiver : BroadcastReceiver() {
 
     fun createNotificationChannel(context: Context) {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val name = "গুগল ড্রাইভ ব্যাকআপ রিমাইন্ডার"
-        val descriptionText = "সাপ্তাহিক বৃহস্পতিবার সন্ধ্যা ৬টায় ক্লাউড ব্যাকআপ নোটিফিকেশন"
+        val name = "অটো ব্যাকআপ রিমাইন্ডার"
+        val descriptionText = "অটো ব্যাকআপ স্ট্যাটাস নোটিফিকেশন"
         val importance = NotificationManager.IMPORTANCE_HIGH
         val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
           description = descriptionText
@@ -61,7 +59,6 @@ class WeeklyBackupReminderReceiver : BroadcastReceiver() {
 
       val intent = Intent(context, MainActivity::class.java).apply {
         flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        putExtra("NAVIGATE_TO_DRIVE_BACKUP", true)
       }
 
       val pendingIntent = PendingIntent.getActivity(
@@ -74,15 +71,15 @@ class WeeklyBackupReminderReceiver : BroadcastReceiver() {
       val isBangla = userPrefs.languageFlow.value.name == "BANGLA"
 
       val title = if (isBangla) {
-        "🔔 গাড়ির হিসাব ব্যাকআপ নিন (বৃহস্পতিবার)"
+        "🔔 অটো ব্যাকআপ সুরক্ষিত আছে"
       } else {
-        "🔔 Weekly Backup Reminder (Thursday)"
+        "🔔 Auto Backup Active"
       }
 
       val content = if (isBangla) {
-        "আপনার ১ সপ্তাহের সমস্ত ট্রিপ ও আয়ের হিসাব সুরক্ষিত রাখতে গুগল ড্রাইভে ব্যাকআপ নিন।"
+        "অটো ব্যাকআপ চালু আছে (গুগল ড্রাইভে স্বয়ংক্রিয়)।"
       } else {
-        "Tap here to backup this week's trip records securely to Google Drive."
+        "Android Auto Backup is enabled and syncing automatically via Google."
       }
 
       val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -99,9 +96,6 @@ class WeeklyBackupReminderReceiver : BroadcastReceiver() {
       notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
-    /**
-     * Schedules alarm for every Thursday at 6:00 PM (18:00)
-     */
     fun scheduleWeeklyBackupReminder(context: Context) {
       val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
       val intent = Intent(context, WeeklyBackupReminderReceiver::class.java)
@@ -119,7 +113,6 @@ class WeeklyBackupReminderReceiver : BroadcastReceiver() {
         set(Calendar.SECOND, 0)
         set(Calendar.MILLISECOND, 0)
 
-        // If today is Thursday after 6 PM or any subsequent day, schedule for NEXT Thursday
         if (timeInMillis <= System.currentTimeMillis()) {
           add(Calendar.WEEK_OF_YEAR, 1)
         }
