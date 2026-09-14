@@ -20,30 +20,36 @@ fun authenticateWithBiometric(
   }
 
   val biometricManager = BiometricManager.from(context)
-  when (biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)) {
+  val canAuth = biometricManager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+  when (canAuth) {
     BiometricManager.BIOMETRIC_SUCCESS -> {
       val executor = ContextCompat.getMainExecutor(context)
       val biometricPrompt = BiometricPrompt(activity, executor,
         object : BiometricPrompt.AuthenticationCallback() {
           override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
             super.onAuthenticationError(errorCode, errString)
-            Toast.makeText(context, "Authentication error: \$errString", Toast.LENGTH_SHORT).show()
+            val msg = if (errorCode == BiometricPrompt.ERROR_LOCKOUT || errorCode == BiometricPrompt.ERROR_LOCKOUT_PERMANENT) {
+              if (language == AppLanguage.BANGLA) "অত্যধিক ভুল চেষ্টার কারণে ফিঙ্গারপ্রিন্ট সাময়িকভাবে লক করা হয়েছে।" else "Biometric locked out due to too many attempts."
+            } else {
+              if (language == AppLanguage.BANGLA) "ফিঙ্গারপ্রিন্ট ত্রুটি: $errString" else "Biometric error: $errString"
+            }
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
           }
 
           override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
             super.onAuthenticationSucceeded(result)
-            Toast.makeText(context, "Authentication succeeded!", Toast.LENGTH_SHORT).show()
             onSuccess()
           }
 
           override fun onAuthenticationFailed() {
             super.onAuthenticationFailed()
-            Toast.makeText(context, "Authentication failed", Toast.LENGTH_SHORT).show()
+            val msg = if (language == AppLanguage.BANGLA) "ফিঙ্গারপ্রিন্ট মেলেনি, আবার চেষ্টা করুন" else "Fingerprint did not match"
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
           }
         })
 
       val promptInfo = BiometricPrompt.PromptInfo.Builder()
-        .setTitle(if (language == AppLanguage.BANGLA) "ফিঙ্গারপ্রিন্ট লগইন" else "Fingerprint Login")
+        .setTitle(if (language == AppLanguage.BANGLA) "ফিঙ্গারপ্রিন্ট দিয়ে লগইন" else "Fingerprint Login")
         .setSubtitle(if (language == AppLanguage.BANGLA) "আপনার একাউন্টে প্রবেশ করতে আঙুল স্পর্শ করুন" else "Touch sensor to log in to your account")
         .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
         .build()
@@ -51,16 +57,20 @@ fun authenticateWithBiometric(
       biometricPrompt.authenticate(promptInfo)
     }
     BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> {
-      Toast.makeText(context, "No biometric hardware found.", Toast.LENGTH_SHORT).show()
+      val msg = if (language == AppLanguage.BANGLA) "এই ফোনে ফিঙ্গারপ্রিন্ট সেন্সর নেই।" else "No biometric hardware found."
+      Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
     BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> {
-      Toast.makeText(context, "Biometric hardware is currently unavailable.", Toast.LENGTH_SHORT).show()
+      val msg = if (language == AppLanguage.BANGLA) "ফিঙ্গারপ্রিন্ট সেন্সর আপাতত অনুপলব্ধ।" else "Biometric hardware is currently unavailable."
+      Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
     BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> {
-      Toast.makeText(context, "No fingerprints enrolled on this device.", Toast.LENGTH_SHORT).show()
+      val msg = if (language == AppLanguage.BANGLA) "আপনার ফোনে ফিঙ্গারপ্রিন্ট সেটআপ করা নেই। ফোনের সেটিংসে গিয়ে ফিঙ্গারপ্রিন্ট সেটআপ করুন।" else "No fingerprint enrolled. Please set up fingerprint in phone settings."
+      Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
     else -> {
-      Toast.makeText(context, "Biometric authentication error.", Toast.LENGTH_SHORT).show()
+      val msg = if (language == AppLanguage.BANGLA) "ফিঙ্গারপ্রিন্ট ব্যবহারে সমস্যা হচ্ছে।" else "Biometric authentication error."
+      Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
     }
   }
 }

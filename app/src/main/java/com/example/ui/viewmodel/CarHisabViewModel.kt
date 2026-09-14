@@ -267,15 +267,82 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   }
 
   fun updateRememberEmail(email: String, remember: Boolean) {
-    val current = userProfile.value
-    userPrefsRepo.updateProfile(
-      current.copy(
-        rememberEmail = remember,
-        savedEmail = if (remember) email else "",
-        driverEmail = if (current.driverEmail.isBlank()) email else current.driverEmail,
-        isLoggedIn = true
+    userPrefsRepo.updateRememberEmail(email, remember)
+  }
+
+  fun saveBiometricRefreshToken(refreshToken: String) {
+    try {
+      val context = getApplication<Application>().applicationContext
+      val masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
+      val securePrefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+        "car_hisab_secure_prefs",
+        masterKeyAlias,
+        context,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
       )
-    )
+      securePrefs.edit().putString("supabase_refresh_token", refreshToken).apply()
+    } catch (e: Exception) {
+      val context = getApplication<Application>().applicationContext
+      context.getSharedPreferences("car_hisab_fallback_secure", Context.MODE_PRIVATE)
+        .edit().putString("supabase_refresh_token", refreshToken).apply()
+    }
+  }
+
+  fun getBiometricRefreshToken(): String? {
+    return try {
+      val context = getApplication<Application>().applicationContext
+      val masterKeyAlias = androidx.security.crypto.MasterKeys.getOrCreate(androidx.security.crypto.MasterKeys.AES256_GCM_SPEC)
+      val securePrefs = androidx.security.crypto.EncryptedSharedPreferences.create(
+        "car_hisab_secure_prefs",
+        masterKeyAlias,
+        context,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        androidx.security.crypto.EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+      )
+      securePrefs.getString("supabase_refresh_token", null)
+    } catch (e: Exception) {
+      val context = getApplication<Application>().applicationContext
+      context.getSharedPreferences("car_hisab_fallback_secure", Context.MODE_PRIVATE)
+        .getString("supabase_refresh_token", null)
+    }
+  }
+
+  fun loginWithBiometric(
+    onSuccess: (email: String) -> Unit,
+    onError: (message: String) -> Unit
+  ) {
+    val refreshToken = getBiometricRefreshToken()
+    val profile = userProfile.value
+    if (refreshToken.isNullOrBlank()) {
+      if (profile.savedEmail.isNotBlank() && profile.rememberEmail) {
+        val updated = profile.copy(isLoggedIn = true)
+        userPrefsRepo.updateProfile(updated)
+        onSuccess(profile.savedEmail)
+      } else {
+        onError("পূর্বে সংরক্ষিত ফিঙ্গারপ্রিন্ট সেশন পাওয়া যায়নি। সাধারণ লগইন করুন।")
+      }
+      return
+    }
+
+    viewModelScope.launch {
+      val result = com.example.data.auth.SupabaseAuthManager.refreshSession(refreshToken)
+      if (result.success) {
+        result.refreshToken?.let { newRefresh ->
+          saveBiometricRefreshToken(newRefresh)
+        }
+        val userEmail = result.email ?: profile.savedEmail.ifBlank { profile.driverEmail }
+        val updated = profile.copy(
+          driverEmail = if (userEmail.isNotBlank()) userEmail else profile.driverEmail,
+          savedEmail = if (profile.rememberEmail) userEmail else profile.savedEmail,
+          isLoggedIn = true
+        )
+        userPrefsRepo.updateProfile(updated)
+        onSuccess(userEmail)
+      } else {
+        onError(result.message)
+      }
+    }
   }
 
   fun logout() {

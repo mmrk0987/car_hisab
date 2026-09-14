@@ -340,6 +340,18 @@ class MainActivity : FragmentActivity() {
                     viewModel.checkAndPerformSilentAutoRestore(context)
                     viewModel.navigateTo(AppScreen.DASHBOARD)
                   },
+                  onBiometricLogin = { onSuccess, onError ->
+                    viewModel.loginWithBiometric(
+                      onSuccess = { email ->
+                        viewModel.checkAndPerformSilentAutoRestore(context)
+                        viewModel.navigateTo(AppScreen.DASHBOARD)
+                        onSuccess(email)
+                      },
+                      onError = { msg ->
+                        onError(msg)
+                      }
+                    )
+                  },
                   onGoogleAuthSuccess = { email, name ->
                     viewModel.onGoogleAuthSuccess(email, name)
                   },
