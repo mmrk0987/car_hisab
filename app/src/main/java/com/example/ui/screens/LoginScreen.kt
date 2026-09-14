@@ -104,6 +104,7 @@ fun LoginScreen(
   supabaseUrl: String = SupabaseAuthManager.DEFAULT_SUPABASE_URL,
   supabaseAnonKey: String = SupabaseAuthManager.DEFAULT_ANON_KEY,
   onLoginSuccess: (email: String, remember: Boolean) -> Unit = { _, _ -> },
+  onBiometricLogin: (onSuccess: (email: String) -> Unit, onError: (String) -> Unit) -> Unit = { _, _ -> },
   onGoogleAuthSuccess: (email: String, name: String) -> Unit = { _, _ -> },
   onSignUpSuccess: (email: String, phone: String) -> Unit = { _, _ -> }
 ) {
@@ -120,6 +121,16 @@ fun LoginScreen(
   var loginError by remember { mutableStateOf<String?>(null) }
   var loginErrorDetail by remember { mutableStateOf<String?>(null) }
   var isLoggingIn by remember { mutableStateOf(false) }
+
+  // Forgot Password States
+  var showForgotPasswordDialog by remember { mutableStateOf(false) }
+  var forgotEmail by remember { mutableStateOf("") }
+  var forgotDay by remember { mutableStateOf("01") }
+  var forgotMonth by remember { mutableStateOf("01") }
+  var forgotYear by remember { mutableStateOf("1990") }
+  var forgotNewPassword by remember { mutableStateOf("") }
+  var forgotIsResetting by remember { mutableStateOf(false) }
+  var forgotError by remember { mutableStateOf<String?>(null) }
 
   // Sign Up States
   var signUpGmail by remember { mutableStateOf("") }
@@ -175,6 +186,12 @@ fun LoginScreen(
           if (supabaseResult.success) {
             val userEmail = supabaseResult.email ?: googleEmail
             val userName = supabaseResult.name ?: googleIdTokenCredential.displayName ?: ""
+            supabaseResult.refreshToken?.let { rt ->
+              (context as? Activity)?.let {
+                val vm = androidx.lifecycle.ViewModelProvider(it as androidx.lifecycle.ViewModelStoreOwner)[com.example.ui.viewmodel.CarHisabViewModel::class.java]
+                vm.saveBiometricRefreshToken(rt)
+              }
+            }
             onGoogleAuthSuccess(userEmail, userName)
           } else {
             loginError = supabaseResult.message
@@ -470,30 +487,49 @@ fun LoginScreen(
 
           Spacer(modifier = Modifier.height(8.dp))
 
-          // "Remember user Email" Checkbox
+          // "Remember user Email" Checkbox and "Forgot Password" Link
           Row(
             modifier = Modifier
               .fillMaxWidth()
-              .clickable { rememberEmail = !rememberEmail }
               .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
           ) {
-            Checkbox(
-              checked = rememberEmail,
-              onCheckedChange = { rememberEmail = it },
-              colors = CheckboxDefaults.colors(
-                checkedColor = DarkGreenPrimary,
-                checkmarkColor = Color.White,
-                uncheckedColor = Color(0xFF94A3B8)
-              ),
-              modifier = Modifier.testTag("remember_email_checkbox")
-            )
-            Spacer(modifier = Modifier.width(6.dp))
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              modifier = Modifier.clickable { rememberEmail = !rememberEmail }
+            ) {
+              Checkbox(
+                checked = rememberEmail,
+                onCheckedChange = { rememberEmail = it },
+                colors = CheckboxDefaults.colors(
+                  checkedColor = DarkGreenPrimary,
+                  checkmarkColor = Color.White,
+                  uncheckedColor = Color(0xFF94A3B8)
+                ),
+                modifier = Modifier.testTag("remember_email_checkbox")
+              )
+              Spacer(modifier = Modifier.width(4.dp))
+              Text(
+                text = if (language == AppLanguage.BANGLA) "আমার ইমেইল মনে রাখুন" else "Remember Me",
+                fontSize = 12.sp,
+                color = Color(0xFFCBD5E1),
+                fontWeight = FontWeight.Medium
+              )
+            }
+
             Text(
-              text = if (language == AppLanguage.BANGLA) "আমার ইমেইল মনে রাখুন" else "Remember user Email",
-              fontSize = 13.sp,
-              color = Color(0xFFCBD5E1),
-              fontWeight = FontWeight.Medium
+              text = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড ভুলে গেছেন?" else "Forgot Password?",
+              fontSize = 12.sp,
+              color = MintGreenAccent,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier
+                .clickable {
+                  forgotEmail = loginEmail
+                  forgotError = null
+                  showForgotPasswordDialog = true
+                }
+                .testTag("forgot_password_link")
             )
           }
 
@@ -517,35 +553,6 @@ fun LoginScreen(
           }
 
           Spacer(modifier = Modifier.height(18.dp))
-
-          // Google OAuth Login Button
-          Button(
-            onClick = { performNativeGoogleAuth() },
-            enabled = !isLoggingIn,
-            modifier = Modifier
-              .fillMaxWidth()
-              .height(50.dp)
-              .testTag("login_google_auth_button"),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = DarkGreenCard),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MintGreenAccent.copy(alpha = 0.5f))
-          ) {
-            Icon(
-              imageVector = Icons.Default.AutoAwesome,
-              contentDescription = "Google Auth",
-              tint = MintGreenAccent,
-              modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
-              text = if (language == AppLanguage.BANGLA) "গুগল দিয়ে সাইন-ইন করুন" else "Sign In with Google",
-              fontSize = 15.sp,
-              fontWeight = FontWeight.Bold,
-              color = Color.White
-            )
-          }
-
-          Spacer(modifier = Modifier.height(12.dp))
 
           // Primary Login Button
           Button(
@@ -577,6 +584,12 @@ fun LoginScreen(
                 isLoggingIn = false
 
                 if (authResult.success) {
+                  authResult.refreshToken?.let { rt ->
+                    (context as? Activity)?.let {
+                      val vm = androidx.lifecycle.ViewModelProvider(it as androidx.lifecycle.ViewModelStoreOwner)[com.example.ui.viewmodel.CarHisabViewModel::class.java]
+                      vm.saveBiometricRefreshToken(rt)
+                    }
+                  }
                   onLoginSuccess(authResult.email ?: email, rememberEmail)
                 } else {
                   loginError = authResult.message
@@ -619,12 +632,15 @@ fun LoginScreen(
               .height(54.dp)
               .clip(RoundedCornerShape(16.dp))
               .clickable {
-                if (savedEmail.isNotBlank() && savedRememberEmail) {
-                  authenticateWithBiometric(context, language) {
-                    onLoginSuccess(savedEmail, savedRememberEmail)
-                  }
-                } else {
-                  Toast.makeText(context, if (language == AppLanguage.BANGLA) "প্রথমে পাসওয়ার্ড দিয়ে লগইন করে 'Remember Me' সেভ করুন।" else "Login with password first to enable fingerprint.", Toast.LENGTH_LONG).show()
+                authenticateWithBiometric(context, language) {
+                  onBiometricLogin(
+                    { userEmail ->
+                      onLoginSuccess(userEmail, true)
+                    },
+                    { errorMsg ->
+                      Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                    }
+                  )
                 }
               }
               .testTag("fingerprint_login_option_button"),
@@ -644,7 +660,7 @@ fun LoginScreen(
               )
               Spacer(modifier = Modifier.width(10.dp))
               Text(
-                text = if (language == AppLanguage.BANGLA) "ফিঙ্গারপ্রিন্ট দিয়ে লগইন করুন" else "Login with Fingerprint",
+                text = if (language == AppLanguage.BANGLA) "Fingerprint দিয়ে লগইন" else "Login with Fingerprint",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Color(0xFFF1F5F9)
@@ -652,6 +668,215 @@ fun LoginScreen(
             }
           }
         }
+      }
+
+      // Forgot Password Dialog
+      if (showForgotPasswordDialog) {
+        androidx.compose.material3.AlertDialog(
+          onDismissRequest = {
+            if (!forgotIsResetting) showForgotPasswordDialog = false
+          },
+          containerColor = DarkGreenCard,
+          title = {
+            Text(
+              text = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড রিসেট করুন" else "Reset Password",
+              color = Color.White,
+              fontWeight = FontWeight.Bold,
+              fontSize = 18.sp
+            )
+          },
+          text = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+              Text(
+                text = if (language == AppLanguage.BANGLA) "আপনার ইমেইল, জন্ম তারিখ এবং নতুন পাসওয়ার্ড দিন:" else "Enter your email, Date of Birth, and new password:",
+                fontSize = 13.sp,
+                color = Color(0xFFCBD5E1)
+              )
+              Spacer(modifier = Modifier.height(10.dp))
+
+              // Email input
+              OutlinedTextField(
+                value = forgotEmail,
+                onValueChange = { forgotEmail = it },
+                label = { Text("Email") },
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedContainerColor = DarkGreenSurface,
+                  unfocusedContainerColor = DarkGreenSurface,
+                  focusedTextColor = Color.White,
+                  unfocusedTextColor = Color.White
+                ),
+                modifier = Modifier.fillMaxWidth()
+              )
+
+              Spacer(modifier = Modifier.height(10.dp))
+
+              Text(
+                text = if (language == AppLanguage.BANGLA) "জন্ম তারিখ:" else "Date of Birth:",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MintGreenAccent
+              )
+              Spacer(modifier = Modifier.height(4.dp))
+
+              // Day / Month / Year Pickers Row
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+              ) {
+                OutlinedTextField(
+                  value = forgotDay,
+                  onValueChange = { if (it.length <= 2) forgotDay = it },
+                  label = { Text("Day") },
+                  placeholder = { Text("DD") },
+                  singleLine = true,
+                  keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                  shape = RoundedCornerShape(10.dp),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = DarkGreenSurface,
+                    unfocusedContainerColor = DarkGreenSurface,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                  ),
+                  modifier = Modifier.weight(1f)
+                )
+
+                OutlinedTextField(
+                  value = forgotMonth,
+                  onValueChange = { if (it.length <= 2) forgotMonth = it },
+                  label = { Text("Month") },
+                  placeholder = { Text("MM") },
+                  singleLine = true,
+                  keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                  shape = RoundedCornerShape(10.dp),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = DarkGreenSurface,
+                    unfocusedContainerColor = DarkGreenSurface,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                  ),
+                  modifier = Modifier.weight(1f)
+                )
+
+                OutlinedTextField(
+                  value = forgotYear,
+                  onValueChange = { if (it.length <= 4) forgotYear = it },
+                  label = { Text("Year") },
+                  placeholder = { Text("YYYY") },
+                  singleLine = true,
+                  keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                  shape = RoundedCornerShape(10.dp),
+                  colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = DarkGreenSurface,
+                    unfocusedContainerColor = DarkGreenSurface,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White
+                  ),
+                  modifier = Modifier.weight(1.2f)
+                )
+              }
+
+              Spacer(modifier = Modifier.height(10.dp))
+
+              // New Password
+              OutlinedTextField(
+                value = forgotNewPassword,
+                onValueChange = { forgotNewPassword = it },
+                label = { Text(if (language == AppLanguage.BANGLA) "নতুন পাসওয়ার্ড" else "New Password") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                shape = RoundedCornerShape(10.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedContainerColor = DarkGreenSurface,
+                  unfocusedContainerColor = DarkGreenSurface,
+                  focusedTextColor = Color.White,
+                  unfocusedTextColor = Color.White
+                ),
+                modifier = Modifier.fillMaxWidth()
+              )
+
+              if (!forgotError.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                  text = forgotError ?: "",
+                  color = LossRed,
+                  fontSize = 12.sp,
+                  fontWeight = FontWeight.Bold
+                )
+              }
+            }
+          },
+          confirmButton = {
+            Button(
+              onClick = {
+                val email = forgotEmail.trim()
+                val day = forgotDay.padStart(2, '0')
+                val month = forgotMonth.padStart(2, '0')
+                val year = forgotYear.trim()
+                val dobFormatted = "$day/$month/$year"
+                val newPass = forgotNewPassword
+
+                if (email.isBlank() || !email.contains("@")) {
+                  forgotError = if (language == AppLanguage.BANGLA) "সঠিক ইমেইল দিন" else "Enter valid email"
+                  return@Button
+                }
+                if (day.length != 2 || month.length != 2 || year.length != 4) {
+                  forgotError = if (language == AppLanguage.BANGLA) "সঠিক দিন/মাস/বছর লিখুন" else "Enter valid DD/MM/YYYY"
+                  return@Button
+                }
+                if (newPass.length < 6) {
+                  forgotError = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে" else "Password must be at least 6 characters"
+                  return@Button
+                }
+
+                forgotIsResetting = true
+                forgotError = null
+
+                coroutineScope.launch {
+                  val resetRes = SupabaseAuthManager.resetPasswordByDob(
+                    email = email,
+                    dob = dobFormatted,
+                    newPassword = newPass,
+                    baseUrl = supabaseUrl,
+                    anonKey = supabaseAnonKey
+                  )
+                  forgotIsResetting = false
+                  if (resetRes.success) {
+                    showForgotPasswordDialog = false
+                    Toast.makeText(context, resetRes.message, Toast.LENGTH_LONG).show()
+                  } else {
+                    forgotError = resetRes.message
+                  }
+                }
+              },
+              enabled = !forgotIsResetting,
+              colors = ButtonDefaults.buttonColors(containerColor = DarkGreenPrimary)
+            ) {
+              if (forgotIsResetting) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Color(0xFF022B1E), strokeWidth = 2.dp)
+              } else {
+                Text(
+                  text = if (language == AppLanguage.BANGLA) "পাসওয়ার্ড পরিবর্তন করুন" else "Update Password",
+                  color = Color(0xFF022B1E),
+                  fontWeight = FontWeight.Bold
+                )
+              }
+            }
+          },
+          dismissButton = {
+            androidx.compose.material3.TextButton(
+              onClick = { showForgotPasswordDialog = false },
+              enabled = !forgotIsResetting
+            ) {
+              Text(
+                text = if (language == AppLanguage.BANGLA) "বাতিল" else "Cancel",
+                color = Color(0xFF94A3B8)
+              )
+            }
+          }
+        )
       }
 
       // TAB 1: SIGN UP CONTENT

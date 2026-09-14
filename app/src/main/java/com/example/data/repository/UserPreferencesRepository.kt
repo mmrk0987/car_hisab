@@ -170,20 +170,38 @@ class UserPreferencesRepository(context: Context) {
     )
   }
 
-  fun updateProfile(profile: UserProfile) {
+  fun updateRememberEmail(email: String, remember: Boolean) {
+    val current = _profileFlow.value
+    val newSavedEmail = if (remember) email else ""
+    val updated = current.copy(
+      rememberEmail = remember,
+      savedEmail = newSavedEmail,
+      driverEmail = if (current.driverEmail.isBlank()) email else current.driverEmail,
+      isLoggedIn = true
+    )
     prefs.edit()
-      .putString("key_car_name", profile.carName)
-      .putString("key_car_model", profile.carModel)
-      .putString("key_car_number", profile.carNumber)
-      .putString("key_driver_name", profile.driverName)
-      .putString("key_driver_name_bn", profile.driverNameBangla)
-      .putString("key_driver_name_en", profile.driverNameEnglish)
-      .putString("key_birthdate", profile.birthDate)
-      .putString("key_driver_phone", profile.driverPhone)
-      .putString("key_driver_email", profile.driverEmail)
-      .putString("key_profile_image_uri", profile.profileImageUri)
-      .putBoolean("key_remember_email", profile.rememberEmail)
-      .putString("key_saved_email", profile.savedEmail)
+      .putBoolean("key_remember_email", remember)
+      .putString("key_saved_email", newSavedEmail)
+      .apply()
+    _profileFlow.value = updated
+  }
+
+  fun updateProfile(profile: UserProfile) {
+    val savedEmailToStore = if (profile.rememberEmail) profile.savedEmail else ""
+    val updatedProfile = profile.copy(savedEmail = savedEmailToStore)
+    prefs.edit()
+      .putString("key_car_name", updatedProfile.carName)
+      .putString("key_car_model", updatedProfile.carModel)
+      .putString("key_car_number", updatedProfile.carNumber)
+      .putString("key_driver_name", updatedProfile.driverName)
+      .putString("key_driver_name_bn", updatedProfile.driverNameBangla)
+      .putString("key_driver_name_en", updatedProfile.driverNameEnglish)
+      .putString("key_birthdate", updatedProfile.birthDate)
+      .putString("key_driver_phone", updatedProfile.driverPhone)
+      .putString("key_driver_email", updatedProfile.driverEmail)
+      .putString("key_profile_image_uri", updatedProfile.profileImageUri)
+      .putBoolean("key_remember_email", updatedProfile.rememberEmail)
+      .putString("key_saved_email", savedEmailToStore)
       .putBoolean("key_nid_front", profile.nidFrontAttached)
       .putBoolean("key_nid_back", profile.nidBackAttached)
       .putBoolean("key_selfie", profile.selfieAttached)

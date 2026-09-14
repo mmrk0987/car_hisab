@@ -16,6 +16,7 @@ data class SupabaseAuthResult(
   val name: String? = null,
   val provider: String? = null,
   val accessToken: String? = null,
+  val refreshToken: String? = null,
   val message: String,
   val errorDetail: String? = null
 )
@@ -112,6 +113,7 @@ object SupabaseAuthManager {
         Log.d(TAG, "loginWithEmail SUCCESS. HTTP status: $httpCode")
         val json = JSONObject(respBody)
         val accessToken = json.optString("access_token", "")
+        val refreshToken = json.optString("refresh_token", "")
         val userObj = json.optJSONObject("user")
         val returnEmail = userObj?.optString("email", cleanEmail) ?: cleanEmail
 
@@ -303,6 +305,7 @@ object SupabaseAuthManager {
         Log.d(TAG, "signInWithGoogle SUCCESS. HTTP status: $httpCode")
         val json = JSONObject(respBody)
         val accessToken = json.optString("access_token", "")
+        val refreshToken = json.optString("refresh_token", "")
         val userObj = json.optJSONObject("user")
         val returnEmail = userObj?.optString("email", "") ?: ""
         val userMetadata = userObj?.optJSONObject("user_metadata")
@@ -336,6 +339,137 @@ object SupabaseAuthManager {
         success = false,
         message = "Supabase Google সাইন-ইনে সমস্যা: ${e.localizedMessage ?: "Network error"}",
         errorDetail = "Exception: ${e.javaClass.simpleName}: ${e.message}"
+      )
+    }
+  }
+
+  /**
+   * Refresh session using Supabase refresh_token endpoint
+   */
+  suspend fun refreshSession(
+    refreshToken: String,
+    baseUrl: String = DEFAULT_SUPABASE_URL,
+    anonKey: String = DEFAULT_ANON_KEY
+  ): SupabaseAuthResult = withContext(Dispatchers.IO) {
+    if (refreshToken.isBlank()) {
+      return@withContext SupabaseAuthResult(
+        success = false,
+        message = "রিফ্রেশ টোকেন খালি।",
+        errorDetail = "Refresh token is empty"
+      )
+    }
+
+    try {
+      val rootUrl = cleanBaseUrl(baseUrl)
+      val endpoint = "$rootUrl/auth/v1/token?grant_type=refresh_token"
+      val key = anonKey.ifBlank { DEFAULT_ANON_KEY }
+
+      val payload = JSONObject().apply {
+        put("refresh_token", refreshToken.trim())
+      }
+
+      val request = Request.Builder()
+        .url(endpoint)
+        .addHeader("apikey", key)
+        .addHeader("Content-Type", "application/json")
+        .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+        .build()
+
+      val response = httpClient.newCall(request).execute()
+      val respBody = response.body?.string() ?: ""
+      val httpCode = response.code
+
+      if (response.isSuccessful) {
+        val json = JSONObject(respBody)
+        val accessToken = json.optString("access_token", "")
+        val newRefreshToken = json.optString("refresh_token", refreshToken)
+        val userObj = json.optJSONObject("user")
+        val returnEmail = userObj?.optString("email", "") ?: ""
+
+        SupabaseAuthResult(
+          success = true,
+          email = returnEmail,
+          accessToken = accessToken,
+          refreshToken = newRefreshToken,
+          message = "সেশন সফলভাবে রিনিউ হয়েছে।"
+        )
+      } else {
+        val parsed = parseSupabaseError(respBody, httpCode)
+        SupabaseAuthResult(
+          success = false,
+          message = if (httpCode == 400 || httpCode == 401) "সেশন মেয়াদোত্তীর্ণ হয়েছে, দয়া করে পুনরায় লগইন করুন।" else parsed.userFriendlyMsg,
+          errorDetail = "HTTP $httpCode [Code: ${parsed.errorCode}]: ${parsed.errorMessage}"
+        )
+      }
+    } catch (e: Exception) {
+      SupabaseAuthResult(
+        success = false,
+        message = "সেশন রিনিউ করতে ব্যর্থ: ${e.localizedMessage ?: "Network error"}",
+        errorDetail = "Exception: ${e.javaClass.simpleName}: ${e.message}"
+      )
+    }
+  }
+
+  /**
+   * Reset Password by DOB via Supabase Edge Function reset-password-by-dob
+   */
+  suspend fun resetPasswordByDob(
+    email: String,
+    dob: String,
+    newPassword: String,
+    baseUrl: String = DEFAULT_SUPABASE_URL,
+    anonKey: String = DEFAULT_ANON_KEY
+  ): SupabaseAuthResult = withContext(Dispatchers.IO) {
+    val cleanEmail = email.trim().lowercase()
+    if (cleanEmail.isBlank() || !cleanEmail.contains("@")) {
+      return@withContext SupabaseAuthResult(success = false, message = "সঠিক ইমেইল ঠিকানা দিন।")
+    }
+    if (dob.isBlank()) {
+      return@withContext SupabaseAuthResult(success = false, message = "জন্ম তারিখ দেওয়া আবশ্যক।")
+    }
+    if (newPassword.length < 6) {
+      return@withContext SupabaseAuthResult(success = false, message = "নতুন পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।")
+    }
+
+    try {
+      val rootUrl = cleanBaseUrl(baseUrl)
+      val endpoint = "$rootUrl/functions/v1/reset-password-by-dob"
+      val key = anonKey.ifBlank { DEFAULT_ANON_KEY }
+
+      val payload = JSONObject().apply {
+        put("email", cleanEmail)
+        put("dob", dob.trim())
+        put("new_password", newPassword)
+      }
+
+      val request = Request.Builder()
+        .url(endpoint)
+        .addHeader("apikey", key)
+        .addHeader("Authorization", "Bearer $key")
+        .addHeader("Content-Type", "application/json")
+        .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+        .build()
+
+      val response = httpClient.newCall(request).execute()
+      val respBody = response.body?.string() ?: ""
+      val httpCode = response.code
+
+      if (response.isSuccessful) {
+        val json = JSONObject(respBody)
+        val msg = json.optString("message", "পাসওয়ার্ড সফলভাবে পরিবর্তন করা হয়েছে।")
+        SupabaseAuthResult(success = true, message = msg)
+      } else {
+        val parsed = parseSupabaseError(respBody, httpCode)
+        val userMsg = if (httpCode == 400 || respBody.contains("প্রদত্ত তথ্য মিলছে না") || respBody.contains("not match") || respBody.contains("Mismatch")) {
+          "প্রদত্ত তথ্য মিলছে না"
+        } else parsed.userFriendlyMsg
+        SupabaseAuthResult(success = false, message = userMsg, errorDetail = "HTTP $httpCode: $respBody")
+      }
+    } catch (e: Exception) {
+      SupabaseAuthResult(
+        success = false,
+        message = "সংযোগের সমস্যা: ${e.localizedMessage ?: "Network error"}",
+        errorDetail = e.message
       )
     }
   }
