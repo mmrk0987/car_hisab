@@ -26,6 +26,7 @@ import com.example.data.repository.UserProfile
 import com.example.data.repository.UserPreferencesRepository
 import com.example.ui.i18n.AppLanguage
 import com.example.ui.theme.AppThemeMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -114,6 +115,22 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   val userProfile: StateFlow<UserProfile> = userPrefsRepo.profileFlow
   val vehicleDocuments: StateFlow<VehicleDocuments> = userPrefsRepo.documentsFlow
   val mobilServiceInfo: StateFlow<MobilServiceInfo> = userPrefsRepo.mobilServiceFlow
+
+  fun currentUserId(): String {
+    val profile = userProfile.value
+    return profile.savedEmail.ifBlank {
+      profile.driverEmail.ifBlank {
+        profile.userUniqueKey.ifBlank { "USR-84920" }
+      }
+    }
+  }
+
+  fun currentVehicleId(): String {
+    val profile = userProfile.value
+    return profile.carNumber.ifBlank {
+      profile.carName.ifBlank { "VH-DEFAULT" }
+    }
+  }
 
   fun setLanguage(lang: AppLanguage) {
     userPrefsRepo.setLanguage(lang)
@@ -457,37 +474,67 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     gratuity: Double = 0.0,
     maintenanceCost: Double = 0.0,
     kmDriven: Double = 0.0,
-    onCompleted: () -> Unit = {}
+    onCompleted: () -> Unit = {},
+    onError: ((String) -> Unit)? = null
   ) {
     viewModelScope.launch {
-      bookingRepo.updateBooking(booking.copy(status = "COMPLETED"))
-
-      val rent = booking.totalFare
-      val income = rent - gratuity
-      val profit = income - maintenanceCost
-      val trip = TripEntity(
-        dateMillis = System.currentTimeMillis(),
-        dateString = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date()),
-        place = "${booking.pickupLocation} টু ${booking.dropLocation}",
-        rent = rent,
-        gratuity = gratuity,
-        maintenanceCost = maintenanceCost,
-        kmDriven = kmDriven,
-        description = if (booking.notes.isNotBlank()) "বুকিং আইডি #${booking.id} - ${booking.notes}" else "বুকিং আইডি #${booking.id}",
-        income = income,
-        profit = profit
-      )
-      tripRepo.insertTrip(trip)
-
-      if (kmDriven > 0) {
-        val currentService = mobilServiceInfo.value
-        userPrefsRepo.updateMobilService(
-          currentService.copy(currentOdometerKm = currentService.currentOdometerKm + kmDriven)
+      try {
+        val rent = booking.totalFare
+        val income = rent - gratuity
+        val profit = income - maintenanceCost
+        val trip = TripEntity(
+          userId = currentUserId(),
+          vehicleId = currentVehicleId(),
+          dateMillis = System.currentTimeMillis(),
+          dateString = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date()),
+          place = "${booking.pickupLocation} টু ${booking.dropLocation}".trim().ifEmpty { "Booking Trip" },
+          rent = rent,
+          gratuity = gratuity,
+          maintenanceCost = maintenanceCost,
+          kmDriven = kmDriven,
+          description = if (booking.notes.isNotBlank()) "বুকিং আইডি #${booking.id} - ${booking.notes}" else "বুকিং আইডি #${booking.id}",
+          passengerName = booking.passengerName,
+          passengerPhone = booking.passengerPhone,
+          income = income,
+          profit = profit
         )
-      }
 
-      triggerAutoBackup()
-      onCompleted()
+        val validationErr = tripRepo.validateTrip(trip)
+        if (validationErr != null) {
+          Log.e("TripSaveError", "Convert booking to trip validation failed: $validationErr")
+          onError?.invoke(validationErr)
+          return@launch
+        }
+
+        bookingRepo.updateBooking(booking.copy(status = "COMPLETED"))
+        tripRepo.insertTrip(trip)
+
+        viewModelScope.launch(Dispatchers.IO) {
+          try {
+            com.example.data.auth.SupabaseAuthManager.insertTripToSupabase(trip)
+          } catch (se: Exception) {
+            Log.e("TripSaveError", "Supabase trip insertion failed: ${se.message}", se)
+          }
+        }
+
+        if (kmDriven > 0) {
+          val currentService = mobilServiceInfo.value
+          userPrefsRepo.updateMobilService(
+            currentService.copy(currentOdometerKm = currentService.currentOdometerKm + kmDriven)
+          )
+        }
+
+        triggerAutoBackup()
+        onCompleted()
+      } catch (e: Exception) {
+        val errorMsg = e.localizedMessage ?: "বুকিং থেকে ট্রিপ তৈরিতে সমস্যা হয়েছে।"
+        Log.e("TripSaveError", "Failed to convert booking to trip: ${e.message}", e)
+        if (onError != null) {
+          onError(errorMsg)
+        } else {
+          _backupStatusMessage.value = "বুকিং ট্রিপ সংরক্ষণে সমস্যা: $errorMsg"
+        }
+      }
     }
   }
 
@@ -500,7 +547,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     userPrefsRepo.updateMobilService(service)
   }
 
-  fun logMobilChanged(newKm: Double, brand: String, cost: Double = 0.0) {
+  fun logMobilChanged(newKm: Double, brand: String, cost: Double = 0.0, onError: ((String) -> Unit)? = null) {
     val current = mobilServiceInfo.value
     val updated = current.copy(
       currentOdometerKm = maxOf(current.currentOdometerKm, newKm),
@@ -512,20 +559,37 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
 
     if (cost > 0) {
       viewModelScope.launch {
-        val trip = TripEntity(
-          dateMillis = System.currentTimeMillis(),
-          dateString = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date()),
-          place = "গাড়ির ইঞ্জিন অয়েল (মবিল) পরিবর্তন",
-          rent = 0.0,
-          gratuity = 0.0,
-          maintenanceCost = cost,
-          kmDriven = 0.0,
-          description = "মবিল ব্র্যান্ড: $brand (${newKm.toInt()} কিমি)",
-          income = 0.0,
-          profit = -cost
-        )
-        tripRepo.insertTrip(trip)
-        triggerAutoBackup()
+        try {
+          val trip = TripEntity(
+            userId = currentUserId(),
+            vehicleId = currentVehicleId(),
+            dateMillis = System.currentTimeMillis(),
+            dateString = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date()),
+            place = "গাড়ির ইঞ্জিন অয়েল (মবিল) পরিবর্তন",
+            rent = 0.0,
+            gratuity = 0.0,
+            maintenanceCost = cost,
+            kmDriven = 0.0,
+            description = "মবিল ব্র্যান্ড: $brand (${newKm.toInt()} কিমি)",
+            income = 0.0,
+            profit = -cost
+          )
+          tripRepo.insertTrip(trip)
+
+          viewModelScope.launch(Dispatchers.IO) {
+            try {
+              com.example.data.auth.SupabaseAuthManager.insertTripToSupabase(trip)
+            } catch (se: Exception) {
+              Log.e("TripSaveError", "Supabase trip insertion failed: ${se.message}", se)
+            }
+          }
+
+          triggerAutoBackup()
+        } catch (e: Exception) {
+          val errorMsg = e.localizedMessage ?: "মবিল রেকর্ড সংরক্ষণে ভুল হয়েছে।"
+          Log.e("TripSaveError", "Failed to log mobil change trip: ${e.message}", e)
+          onError?.invoke(errorMsg)
+        }
       }
     }
   }
@@ -904,7 +968,10 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     return System.currentTimeMillis()
   }
 
-  fun saveTrip(onSuccess: () -> Unit) {
+  fun saveTrip(
+    onSuccess: () -> Unit = {},
+    onError: ((String) -> Unit)? = null
+  ) {
     val place = _tripPlace.value.trim().ifEmpty { "Trip / ট্রিপ" }
     val rent = _rentInput.value.toDoubleOrNull() ?: 0.0
     val gratuity = _gratuityInput.value.toDoubleOrNull() ?: 0.0
@@ -915,8 +982,12 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     val profit = income - maintenance
 
     val tripDateMillis = parseDateStringToMillis(_tripDate.value)
+    val uId = currentUserId()
+    val vId = currentVehicleId()
 
     val newTrip = TripEntity(
+      userId = uId,
+      vehicleId = vId,
       dateMillis = tripDateMillis,
       dateString = _tripDate.value,
       place = place,
@@ -925,43 +996,97 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       maintenanceCost = maintenance,
       kmDriven = km,
       description = desc,
-      passengerName = "",
-      passengerPhone = "",
+      passengerName = _passengerNameInput.value.trim(),
+      passengerPhone = _passengerPhoneInput.value.trim(),
       income = income,
       profit = profit
     )
 
     viewModelScope.launch {
-      tripRepo.insertTrip(newTrip)
-      _tripPlace.value = ""
-      _rentInput.value = ""
-      _gratuityInput.value = ""
-      _maintenanceInput.value = ""
-      _kmInput.value = ""
-      _descInput.value = ""
-      _passengerNameInput.value = ""
-      _passengerPhoneInput.value = ""
-      _tripDate.value = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date())
-      triggerAutoBackup()
-      onSuccess()
+      try {
+        val validationErr = tripRepo.validateTrip(newTrip)
+        if (validationErr != null) {
+          Log.e("TripSaveError", "Trip save failed validation: $validationErr")
+          onError?.invoke(validationErr)
+          return@launch
+        }
+
+        tripRepo.insertTrip(newTrip)
+
+        viewModelScope.launch(Dispatchers.IO) {
+          try {
+            com.example.data.auth.SupabaseAuthManager.insertTripToSupabase(newTrip)
+          } catch (se: Exception) {
+            Log.e("TripSaveError", "Supabase trip insertion failed: ${se.message}", se)
+          }
+        }
+
+        _tripPlace.value = ""
+        _rentInput.value = ""
+        _gratuityInput.value = ""
+        _maintenanceInput.value = ""
+        _kmInput.value = ""
+        _descInput.value = ""
+        _passengerNameInput.value = ""
+        _passengerPhoneInput.value = ""
+        _tripDate.value = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date())
+        triggerAutoBackup()
+        onSuccess()
+      } catch (e: Exception) {
+        val errorMsg = e.localizedMessage ?: "ট্রিপ সংরক্ষণে ব্যর্থ হয়েছে।"
+        Log.e("TripSaveError", "Failed to save trip: ${e.message}", e)
+        if (onError != null) {
+          onError(errorMsg)
+        } else {
+          _backupStatusMessage.value = "ট্রিপ সংরক্ষণে সমস্যা: $errorMsg"
+        }
+      }
     }
   }
 
   fun deleteTrip(trip: TripEntity) {
     viewModelScope.launch {
-      tripRepo.deleteTrip(trip)
-      triggerAutoBackup()
+      try {
+        tripRepo.deleteTrip(trip)
+        triggerAutoBackup()
+      } catch (e: Exception) {
+        Log.e("TripSaveError", "Failed to delete trip: ${e.message}", e)
+      }
     }
   }
 
-  fun updateTrip(trip: TripEntity, onSuccess: () -> Unit = {}) {
+  fun updateTrip(
+    trip: TripEntity,
+    onSuccess: () -> Unit = {},
+    onError: ((String) -> Unit)? = null
+  ) {
     viewModelScope.launch {
-      val income = trip.rent - trip.gratuity
-      val profit = income - trip.maintenanceCost
-      val updated = trip.copy(income = income, profit = profit)
-      tripRepo.updateTrip(updated)
-      triggerAutoBackup()
-      onSuccess()
+      try {
+        val income = trip.rent - trip.gratuity
+        val profit = income - trip.maintenanceCost
+        val uId = trip.userId.ifBlank { currentUserId() }
+        val vId = trip.vehicleId.ifBlank { currentVehicleId() }
+        val updated = trip.copy(userId = uId, vehicleId = vId, income = income, profit = profit)
+
+        val validationErr = tripRepo.validateTrip(updated)
+        if (validationErr != null) {
+          Log.e("TripSaveError", "Trip update failed validation: $validationErr")
+          onError?.invoke(validationErr)
+          return@launch
+        }
+
+        tripRepo.updateTrip(updated)
+        triggerAutoBackup()
+        onSuccess()
+      } catch (e: Exception) {
+        val errorMsg = e.localizedMessage ?: "ট্রিপ আপডেট এ ভুল হয়েছে।"
+        Log.e("TripSaveError", "Failed to update trip: ${e.message}", e)
+        if (onError != null) {
+          onError(errorMsg)
+        } else {
+          _backupStatusMessage.value = "ট্রিপ আপডেটে সমস্যা: $errorMsg"
+        }
+      }
     }
   }
 
