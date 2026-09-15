@@ -6,7 +6,11 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.db.AppDatabase
 import com.example.data.model.BookingEntity
 import com.example.data.model.TripEntity
+import com.example.data.backup.BackupResult
+import com.example.data.backup.GoogleDriveBackupManager
+import com.example.data.backup.RestoreResult
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -119,5 +123,53 @@ class BackupRestoreTest {
     assertEquals(2, restoredTrips.size)
     assertEquals(1, restoredBookings.size)
     assertTrue("New trips should contain Dhaka to Gazipur", restoredTrips.any { it.place == "Dhaka to Gazipur" })
+  }
+
+  @Test
+  fun testEmptyDatabaseVerificationAndPayloadCheck() = kotlinx.coroutines.test.runTest {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = AppDatabase.getDatabase(context)
+
+    db.withTransaction {
+      db.tripDao().deleteAllTrips()
+      db.bookingDao().deleteAllBookings()
+    }
+
+    val isNotEmpty = GoogleDriveBackupManager.verifyDatabaseNotEmpty(context)
+    assertFalse("Empty database should fail verification", isNotEmpty)
+
+    val backupResult = GoogleDriveBackupManager.performBackup(context, isBangla = true)
+    assertTrue("Backup should return Empty for 0 user records", backupResult is BackupResult.Empty)
+  }
+
+  @Test
+  fun testNonEmptyDatabaseBackupAndRestore() = kotlinx.coroutines.test.runTest {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = AppDatabase.getDatabase(context)
+
+    db.withTransaction {
+      db.tripDao().deleteAllTrips()
+      db.bookingDao().deleteAllBookings()
+      db.tripDao().insertTrips(testTrips)
+      db.bookingDao().insertBookings(testBookings)
+    }
+
+    val isNotEmpty = GoogleDriveBackupManager.verifyDatabaseNotEmpty(context)
+    assertTrue("Non-empty database should pass verification", isNotEmpty)
+
+    val backupResult = GoogleDriveBackupManager.performBackup(context, isBangla = true)
+    assertTrue("Backup should succeed for non-empty payload", backupResult is BackupResult.Success)
+
+    val metadata = (backupResult as BackupResult.Success).metadata
+    assertTrue("Metadata exists should be true", metadata.exists)
+    assertTrue("Date string should not be blank", metadata.dateString.isNotBlank())
+    assertTrue("Size string should contain unit", metadata.sizeString.contains("কেবি") || metadata.sizeString.contains("এমবি"))
+
+    val restoreResult = GoogleDriveBackupManager.restoreBackup(context, isBangla = true)
+    assertTrue("Restore should succeed", restoreResult is RestoreResult.Success)
+
+    val restoredSuccess = restoreResult as RestoreResult.Success
+    assertEquals(2, restoredSuccess.tripsCount)
+    assertEquals(1, restoredSuccess.bookingsCount)
   }
 }

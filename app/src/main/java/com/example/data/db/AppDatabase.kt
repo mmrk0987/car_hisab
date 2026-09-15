@@ -27,5 +27,16 @@ abstract class AppDatabase : RoomDatabase() {
         instance
       }
     }
+
+    fun closeDatabase() {
+      synchronized(this) {
+        INSTANCE?.let { db ->
+          if (db.isOpen) {
+            db.close()
+          }
+        }
+        INSTANCE = null
+      }
+    }
   }
 }
