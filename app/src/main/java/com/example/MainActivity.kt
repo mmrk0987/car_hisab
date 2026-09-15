@@ -177,7 +177,7 @@ class MainActivity : FragmentActivity() {
                           AppLanguage.BANGLA -> "অগ্রিম বুকিং"
                           AppLanguage.HINDI -> "অগ্রিম বুকিং"
                           AppLanguage.TAMIL -> "முன்பதிவுகள்"
-                          AppLanguage.URDU -> "ایڈوانس بکنگ"
+                          AppLanguage.URDU -> "ایডوانস بکنگ"
                           else -> "Bookings"
                         }
                         else -> "Car Hisab"
@@ -453,13 +453,19 @@ class MainActivity : FragmentActivity() {
                     )
                   },
                   onUpdateTrip = { updatedTrip ->
-                    viewModel.updateTrip(updatedTrip) {
-                      Toast.makeText(
-                        context,
-                        if (language == AppLanguage.BANGLA) "হিসাব আপডেট করা হয়েছে!" else "Record updated!",
-                        Toast.LENGTH_SHORT
-                      ).show()
-                    }
+                    viewModel.updateTrip(
+                      trip = updatedTrip,
+                      onSuccess = {
+                        Toast.makeText(
+                          context,
+                          if (language == AppLanguage.BANGLA) "হিসাব আপডেট করা হয়েছে!" else "Record updated!",
+                          Toast.LENGTH_SHORT
+                        ).show()
+                      },
+                      onError = { errMsg ->
+                        Toast.makeText(context, errMsg, Toast.LENGTH_LONG).show()
+                      }
+                    )
                   },
                   onUpdateProfileQuick = { nameBn, carModel, carPlate ->
                     viewModel.updateFullProfile(
@@ -495,7 +501,18 @@ class MainActivity : FragmentActivity() {
                     Toast.makeText(context, "বুকিং মুছে ফেলা হয়েছে", Toast.LENGTH_SHORT).show()
                   },
                   onConvertToTrip = { booking, gratuity, maintenance, km ->
-                    viewModel.convertBookingToTrip(booking, gratuity, maintenance, km)
+                    viewModel.convertBookingToTrip(
+                      booking = booking,
+                      gratuity = gratuity,
+                      maintenanceCost = maintenance,
+                      kmDriven = km,
+                      onCompleted = {
+                        Toast.makeText(context, "বুকিং সফলভাবে ট্রিপে রূপান্তরিত হয়েছে!", Toast.LENGTH_SHORT).show()
+                      },
+                      onError = { errMsg ->
+                        Toast.makeText(context, errMsg, Toast.LENGTH_LONG).show()
+                      }
+                    )
                   }
                 )
               }
@@ -518,7 +535,14 @@ class MainActivity : FragmentActivity() {
                     Toast.makeText(context, "সার্ভিস তথ্য সংরক্ষিত হয়েছে", Toast.LENGTH_SHORT).show()
                   },
                   onLogMobilChange = { km, brand, cost ->
-                    viewModel.logMobilChanged(km, brand, cost)
+                    viewModel.logMobilChanged(
+                      newKm = km,
+                      brand = brand,
+                      cost = cost,
+                      onError = { errMsg ->
+                        Toast.makeText(context, errMsg, Toast.LENGTH_LONG).show()
+                      }
+                    )
                     Toast.makeText(context, "মবিল পরিবর্তন এন্ট্রি সফল হয়েছে!", Toast.LENGTH_SHORT).show()
                   },
                   onUpdateOdometer = { newKm ->
@@ -564,10 +588,15 @@ class MainActivity : FragmentActivity() {
                   onKmChange = { viewModel.setKmInput(it) },
                   onDescriptionChange = { viewModel.setDescInput(it) },
                   onSaveTrip = {
-                    viewModel.saveTrip {
-                      Toast.makeText(context, AppStrings.tripSavedSuccess(language), Toast.LENGTH_SHORT).show()
-                      viewModel.navigateTo(AppScreen.ALL_TRIPS)
-                    }
+                    viewModel.saveTrip(
+                      onSuccess = {
+                        Toast.makeText(context, AppStrings.tripSavedSuccess(language), Toast.LENGTH_SHORT).show()
+                        viewModel.navigateTo(AppScreen.ALL_TRIPS)
+                      },
+                      onError = { errorMsg ->
+                        Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                      }
+                    )
                   }
                 )
               }
@@ -594,13 +623,19 @@ class MainActivity : FragmentActivity() {
                     Toast.makeText(context, AppStrings.tripDeleted(language), Toast.LENGTH_SHORT).show()
                   },
                   onUpdateTrip = { updatedTrip ->
-                    viewModel.updateTrip(updatedTrip) {
-                      Toast.makeText(
-                        context,
-                        if (language == AppLanguage.BANGLA) "ট্রিপ আপডেট করা হয়েছে!" else "Trip updated!",
-                        Toast.LENGTH_SHORT
-                      ).show()
-                    }
+                    viewModel.updateTrip(
+                      trip = updatedTrip,
+                      onSuccess = {
+                        Toast.makeText(
+                          context,
+                          if (language == AppLanguage.BANGLA) "ট্রিপ আপডেট করা হয়েছে!" else "Trip updated!",
+                          Toast.LENGTH_SHORT
+                        ).show()
+                      },
+                      onError = { errMsg ->
+                        Toast.makeText(context, errMsg, Toast.LENGTH_LONG).show()
+                      }
+                    )
                   },
                   onAddNewTrip = { viewModel.navigateTo(AppScreen.ADD_TRIP) },
                   onSettingsClick = { viewModel.navigateTo(AppScreen.SETTINGS) },

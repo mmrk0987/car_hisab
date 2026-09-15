@@ -474,6 +474,90 @@ object SupabaseAuthManager {
     }
   }
 
+  /**
+   * Insert trip record into remote Supabase database `trips` table.
+   * Catches network errors or Row Level Security (RLS) violations.
+   */
+  suspend fun insertTripToSupabase(
+    trip: com.example.data.model.TripEntity,
+    baseUrl: String = DEFAULT_SUPABASE_URL,
+    anonKey: String = DEFAULT_ANON_KEY,
+    accessToken: String? = null
+  ): SupabaseAuthResult = withContext(Dispatchers.IO) {
+    val tripSaveTag = "TripSaveError"
+    try {
+      val rootUrl = cleanBaseUrl(baseUrl)
+      val endpoint = "$rootUrl/rest/v1/trips"
+      val key = anonKey.ifBlank { DEFAULT_ANON_KEY }
+      val authHeader = if (!accessToken.isNullOrBlank()) "Bearer $accessToken" else "Bearer $key"
+
+      val payload = JSONObject().apply {
+        put("user_id", trip.userId)
+        put("vehicle_id", trip.vehicleId)
+        put("date_string", trip.dateString)
+        put("date_millis", trip.dateMillis)
+        put("place", trip.place)
+        put("rent", trip.rent)
+        put("gratuity", trip.gratuity)
+        put("maintenance_cost", trip.maintenanceCost)
+        put("km_driven", trip.kmDriven)
+        put("description", trip.description)
+        put("passenger_name", trip.passengerName)
+        put("passenger_phone", trip.passengerPhone)
+        put("income", trip.income)
+        put("profit", trip.profit)
+      }
+
+      val request = Request.Builder()
+        .url(endpoint)
+        .addHeader("apikey", key)
+        .addHeader("Authorization", authHeader)
+        .addHeader("Content-Type", "application/json")
+        .addHeader("Prefer", "return=representation")
+        .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+        .build()
+
+      val response = httpClient.newCall(request).execute()
+      val respBody = response.body?.string() ?: ""
+      val httpCode = response.code
+
+      if (response.isSuccessful) {
+        Log.d("TripSaveSuccess", "Trip inserted to Supabase successfully. HTTP $httpCode")
+        SupabaseAuthResult(
+          success = true,
+          message = "Supabase-এ ট্রিপ সফলভাবে সিঙ্ক হয়েছে!"
+        )
+      } else {
+        val parsed = parseSupabaseError(respBody, httpCode)
+        val isRlsError = respBody.contains("row-level security", ignoreCase = true) ||
+            respBody.contains("RLS", ignoreCase = true) ||
+            httpCode == 401 || httpCode == 403
+        val errorMsg = if (isRlsError) {
+          "Supabase Row Level Security (RLS) সিকিউরিটি পলিসি ত্রুটি: user_id বা পারমিশন সঠিক নয়।"
+        } else {
+          parsed.userFriendlyMsg
+        }
+
+        Log.e(
+          tripSaveTag,
+          "Failed to insert trip to Supabase. HTTP status: $httpCode, Error: ${parsed.errorMessage}, Body: $respBody"
+        )
+        SupabaseAuthResult(
+          success = false,
+          message = errorMsg,
+          errorDetail = "HTTP $httpCode: ${parsed.errorMessage}"
+        )
+      }
+    } catch (e: Exception) {
+      Log.e(tripSaveTag, "Exception inserting trip to Supabase: ${e.javaClass.simpleName} - ${e.message}", e)
+      SupabaseAuthResult(
+        success = false,
+        message = "Supabase সিঙ্ক নেটওয়ার্ক সমস্যা: ${e.localizedMessage ?: "Network error"}",
+        errorDetail = "Exception: ${e.javaClass.simpleName}: ${e.message}"
+      )
+    }
+  }
+
   fun parseSupabaseError(jsonStr: String, statusCode: Int): SupabaseParsedError {
     var errorCode = ""
     var errorMessage = ""
