@@ -37,15 +37,19 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -95,7 +99,14 @@ class MainActivity : FragmentActivity() {
       val language by viewModel.language.collectAsStateWithLifecycle()
       val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
       val profile by viewModel.userProfile.collectAsStateWithLifecycle()
+      val pendingRestoreMetadata by viewModel.pendingRestoreMetadata.collectAsStateWithLifecycle()
       val context = LocalContext.current
+
+      LaunchedEffect(profile.isLoggedIn) {
+        if (profile.isLoggedIn) {
+          viewModel.checkDriveBackupOnLogin()
+        }
+      }
 
       MyApplicationTheme(themeMode = themeMode) {
         BackHandler(enabled = currentScreen != AppScreen.SPLASH && currentScreen != AppScreen.DASHBOARD) {
@@ -303,6 +314,7 @@ class MainActivity : FragmentActivity() {
                   language = language,
                   onProceed = {
                     if (profile.isLoggedIn) {
+                      viewModel.checkDriveBackupOnLogin()
                       viewModel.navigateTo(AppScreen.DASHBOARD)
                     } else {
                       viewModel.navigateTo(AppScreen.LOGIN)
@@ -326,11 +338,13 @@ class MainActivity : FragmentActivity() {
                   savedRememberEmail = profile.rememberEmail,
                   onLoginSuccess = { email, remember ->
                     viewModel.updateRememberEmail(email, remember)
+                    viewModel.checkDriveBackupOnLogin()
                     viewModel.navigateTo(AppScreen.DASHBOARD)
                   },
                   onBiometricLogin = { onSuccess, onError ->
                     viewModel.loginWithBiometric(
                       onSuccess = { email ->
+                        viewModel.checkDriveBackupOnLogin()
                         viewModel.navigateTo(AppScreen.DASHBOARD)
                         onSuccess(email)
                       },
@@ -738,6 +752,51 @@ class MainActivity : FragmentActivity() {
                   }
                 )
               }
+            }
+
+            // WhatsApp-Style Restore Prompt Dialog on Login
+            pendingRestoreMetadata?.let { metadata ->
+              val dialogText = if (language == AppLanguage.BANGLA) {
+                "গুগল ড্রাইভে ব্যাকআপ পাওয়া গেছে (তারিখ: ${metadata.dateString}, সাইজ: ${metadata.sizeString})। রিস্টোর করতে চান?"
+              } else {
+                "Google Drive backup found (Date: ${metadata.dateString}, Size: ${metadata.sizeString}). Do you wish to restore?"
+              }
+
+              AlertDialog(
+                onDismissRequest = { viewModel.dismissRestorePrompt() },
+                title = {
+                  Text(
+                    text = if (language == AppLanguage.BANGLA) "গুগল ড্রাইভ ব্যাকআপ" else "Google Drive Backup",
+                    fontWeight = FontWeight.Bold
+                  )
+                },
+                text = {
+                  Text(text = dialogText)
+                },
+                confirmButton = {
+                  Button(
+                    onClick = {
+                      viewModel.performDriveRestore(
+                        onSuccess = { msg ->
+                          Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        },
+                        onError = { err ->
+                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
+                      )
+                    }
+                  ) {
+                    Text(text = if (language == AppLanguage.BANGLA) "রিস্টোর করুন" else "Restore")
+                  }
+                },
+                dismissButton = {
+                  OutlinedButton(
+                    onClick = { viewModel.dismissRestorePrompt() }
+                  ) {
+                    Text(text = if (language == AppLanguage.BANGLA) "এড়িয়ে যান" else "Skip")
+                  }
+                }
+              )
             }
           }
         }

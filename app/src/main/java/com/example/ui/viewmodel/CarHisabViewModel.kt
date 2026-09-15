@@ -17,6 +17,11 @@ import com.example.data.model.VehicleDocuments
 import com.example.data.model.WeekTrend
 import com.example.data.repository.BookingRepository
 import com.example.data.repository.TripRepository
+import android.util.Log
+import com.example.data.backup.BackupMetadata
+import com.example.data.backup.BackupResult
+import com.example.data.backup.GoogleDriveBackupManager
+import com.example.data.backup.RestoreResult
 import com.example.data.repository.UserProfile
 import com.example.data.repository.UserPreferencesRepository
 import com.example.ui.i18n.AppLanguage
@@ -157,6 +162,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       isProfileCompleted = true
     )
     userPrefsRepo.updateProfile(updatedProfile)
+    checkDriveBackupOnLogin()
     navigateTo(AppScreen.DASHBOARD)
   }
 
@@ -426,6 +432,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         notes = notes.trim()
       )
       bookingRepo.insertBooking(booking)
+      triggerAutoBackup()
     }
   }
 
@@ -479,6 +486,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         )
       }
 
+      triggerAutoBackup()
       onCompleted()
     }
   }
@@ -517,6 +525,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
           profit = -cost
         )
         tripRepo.insertTrip(trip)
+        triggerAutoBackup()
       }
     }
   }
@@ -933,6 +942,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       _passengerNameInput.value = ""
       _passengerPhoneInput.value = ""
       _tripDate.value = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date())
+      triggerAutoBackup()
       onSuccess()
     }
   }
@@ -940,6 +950,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   fun deleteTrip(trip: TripEntity) {
     viewModelScope.launch {
       tripRepo.deleteTrip(trip)
+      triggerAutoBackup()
     }
   }
 
@@ -949,6 +960,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       val profit = income - trip.maintenanceCost
       val updated = trip.copy(income = income, profit = profit)
       tripRepo.updateTrip(updated)
+      triggerAutoBackup()
       onSuccess()
     }
   }
@@ -1015,7 +1027,71 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   private val _backupStatusMessage = MutableStateFlow<String?>("অটো ব্যাকআপ চালু আছে (গুগল ড্রাইভে স্বয়ংক্রিয়)")
   val backupStatusMessage: StateFlow<String?> = _backupStatusMessage.asStateFlow()
 
+  private val _pendingRestoreMetadata = MutableStateFlow<BackupMetadata?>(null)
+  val pendingRestoreMetadata: StateFlow<BackupMetadata?> = _pendingRestoreMetadata.asStateFlow()
+
   fun clearBackupStatusMessage() {
     _backupStatusMessage.value = null
+  }
+
+  fun triggerAutoBackup() {
+    viewModelScope.launch {
+      val context = getApplication<Application>().applicationContext
+      val isBangla = language.value == AppLanguage.BANGLA
+      val result = GoogleDriveBackupManager.performBackup(context, isBangla = isBangla)
+      when (result) {
+        is BackupResult.Success -> {
+          val msg = if (isBangla) "গুগল ড্রাইভ ব্যাকআপ সম্পন্ন (${result.metadata.dateString})"
+          else "Google Drive backup complete (${result.metadata.dateString})"
+          _backupStatusMessage.value = msg
+        }
+        is BackupResult.Empty -> {
+          Log.d("CarHisabViewModel", "Auto-backup skipped: DB is empty")
+        }
+        is BackupResult.Error -> {
+          Log.e("CarHisabViewModel", "Auto-backup failed: ${result.message}")
+        }
+      }
+    }
+  }
+
+  fun checkDriveBackupOnLogin() {
+    viewModelScope.launch {
+      val context = getApplication<Application>().applicationContext
+      val isBangla = language.value == AppLanguage.BANGLA
+      val metadata = GoogleDriveBackupManager.checkForBackup(context, isBangla = isBangla)
+      if (metadata.exists) {
+        _pendingRestoreMetadata.value = metadata
+      }
+    }
+  }
+
+  fun dismissRestorePrompt() {
+    _pendingRestoreMetadata.value = null
+  }
+
+  fun performDriveRestore(
+    onSuccess: (String) -> Unit = {},
+    onError: (String) -> Unit = {}
+  ) {
+    viewModelScope.launch {
+      val context = getApplication<Application>().applicationContext
+      val isBangla = language.value == AppLanguage.BANGLA
+      val result = GoogleDriveBackupManager.restoreBackup(context, isBangla = isBangla)
+      when (result) {
+        is RestoreResult.Success -> {
+          _pendingRestoreMetadata.value = null
+          val msg = if (isBangla)
+            "সফলভাবে ${result.tripsCount} টি ট্রিপ ও ${result.bookingsCount} টি বুকিং রিস্টোর করা হয়েছে!"
+          else
+            "Successfully restored ${result.tripsCount} trips and ${result.bookingsCount} bookings!"
+          _backupStatusMessage.value = msg
+          onSuccess(msg)
+        }
+        is RestoreResult.Error -> {
+          onError(result.message)
+        }
+      }
+    }
   }
 }
