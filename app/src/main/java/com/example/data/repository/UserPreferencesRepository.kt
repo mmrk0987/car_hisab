@@ -245,6 +245,14 @@ class UserPreferencesRepository(context: Context) {
     prefs.edit().putInt("key_last_drive_backup_count", count).apply()
   }
 
+  fun getLastDriveBackupEmail(): String {
+    return prefs.getString("key_last_drive_backup_email", "") ?: ""
+  }
+
+  fun setLastDriveBackupEmail(email: String) {
+    prefs.edit().putString("key_last_drive_backup_email", email.trim().lowercase()).apply()
+  }
+
   private fun loadDocuments(): VehicleDocuments {
     val now = System.currentTimeMillis()
     return VehicleDocuments(

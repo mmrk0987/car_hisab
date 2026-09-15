@@ -172,4 +172,35 @@ class BackupRestoreTest {
     assertEquals(2, restoredSuccess.tripsCount)
     assertEquals(1, restoredSuccess.bookingsCount)
   }
+
+  @Test
+  fun testBanglaDateFormattingAndAccountMismatchPrevention() = kotlinx.coroutines.test.runTest {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val db = AppDatabase.getDatabase(context)
+
+    db.withTransaction {
+      db.tripDao().deleteAllTrips()
+      db.bookingDao().deleteAllBookings()
+      db.tripDao().insertTrips(testTrips)
+      db.bookingDao().insertBookings(testBookings)
+    }
+
+    val timestamp = 1789425000000L
+    val formattedBn = GoogleDriveBackupManager.formatDateString(timestamp, isBangla = true)
+    assertTrue("Bangla date formatting should contain Bangla month or digits", formattedBn.contains("সেপ্টেম্বর") || formattedBn.contains("১৫"))
+
+    val user1 = "user1@gmail.com"
+    val user2 = "user2@gmail.com"
+
+    val backupRes = GoogleDriveBackupManager.performBackup(context, currentAccountEmail = user1, isBangla = true)
+    assertTrue(backupRes is BackupResult.Success)
+
+    val restoreMismatchRes = GoogleDriveBackupManager.restoreBackup(context, currentAccountEmail = user2, isBangla = true)
+    assertTrue("Restore should fail when attempting cross-account restore", restoreMismatchRes is RestoreResult.Error)
+    val errMessage = (restoreMismatchRes as RestoreResult.Error).message
+    assertTrue("Error message should mention cross-account restore restriction", errMessage.contains("ভিন্ন অ্যাকাউন্টের"))
+
+    val restoreMatchRes = GoogleDriveBackupManager.restoreBackup(context, currentAccountEmail = user1, isBangla = true)
+    assertTrue("Restore should succeed when account email matches", restoreMatchRes is RestoreResult.Success)
+  }
 }

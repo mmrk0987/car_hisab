@@ -28,7 +28,9 @@ data class BackupMetadata(
   val sizeString: String = "",
   val timestamp: Long = 0L,
   val sizeBytes: Long = 0L,
-  val fileId: String? = null
+  val fileId: String? = null,
+  val accountEmail: String = "",
+  val accountMismatch: Boolean = false
 )
 
 sealed class BackupResult {
@@ -90,7 +92,11 @@ object GoogleDriveBackupManager {
   private fun checkpointDatabase(context: Context) {
     try {
       val db = AppDatabase.getDatabase(context)
-      db.openHelper.writableDatabase.execSQL("PRAGMA wal_checkpoint(FULL)")
+      db.openHelper.writableDatabase.query(SimpleSQLiteQuery("PRAGMA wal_checkpoint(FULL)")).use { cursor ->
+        if (cursor.moveToFirst()) {
+          Log.d(TAG, "WAL Checkpoint result: busy=${cursor.getInt(0)}, log=${cursor.getInt(1)}, checkpointed=${cursor.getInt(2)}")
+        }
+      }
     } catch (e: Exception) {
       Log.e(TAG, "WAL Checkpoint exception: ${e.message}")
     }
@@ -109,6 +115,7 @@ object GoogleDriveBackupManager {
       checkpointDatabase(context)
 
       val dbFile = context.getDatabasePath(DB_NAME)
+      val walFile = File(dbFile.path + "-wal")
       val backupFolder = File(context.filesDir, "drive_appdata_backup").apply { mkdirs() }
       val targetStagingFile = File(backupFolder, BACKUP_FILE_NAME)
 
@@ -116,6 +123,14 @@ object GoogleDriveBackupManager {
         FileInputStream(dbFile).use { input ->
           FileOutputStream(targetStagingFile).use { output ->
             input.copyTo(output)
+          }
+        }
+        if (walFile.exists() && walFile.length() > 0) {
+          val stagedWal = File(backupFolder, BACKUP_FILE_NAME + "-wal")
+          FileInputStream(walFile).use { input ->
+            FileOutputStream(stagedWal).use { output ->
+              input.copyTo(output)
+            }
           }
         }
       } else {
@@ -134,10 +149,13 @@ object GoogleDriveBackupManager {
   /**
    * Queries Google Drive appDataFolder REST API for carhisab_backup.db
    */
-  suspend fun queryDriveAppDataFile(accessToken: String): BackupMetadata? = withContext(Dispatchers.IO) {
+  suspend fun queryDriveAppDataFile(
+    accessToken: String,
+    currentAccountEmail: String = ""
+  ): BackupMetadata? = withContext(Dispatchers.IO) {
     if (accessToken.isBlank()) return@withContext null
     try {
-      val url = "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='$BACKUP_FILE_NAME' and trashed=false&fields=files(id,name,modifiedTime,size)"
+      val url = "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='$BACKUP_FILE_NAME' and trashed=false&fields=files(id,name,modifiedTime,size,appProperties,description)"
       val request = Request.Builder()
         .url(url)
         .addHeader("Authorization", "Bearer $accessToken")
@@ -156,9 +174,41 @@ object GoogleDriveBackupManager {
           val modifiedTimeStr = fileObj.optString("modifiedTime", "")
           var timestamp = System.currentTimeMillis()
           try {
-            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-            timestamp = sdf.parse(modifiedTimeStr)?.time ?: System.currentTimeMillis()
+            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+              timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }
+            val parsedDate = try {
+              sdf.parse(modifiedTimeStr)
+            } catch (_: Exception) {
+              val sdf2 = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+              }
+              try {
+                sdf2.parse(modifiedTimeStr)
+              } catch (_: Exception) {
+                val sdf3 = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply {
+                  timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }
+                sdf3.parse(modifiedTimeStr)
+              }
+            }
+            timestamp = parsedDate?.time ?: System.currentTimeMillis()
           } catch (_: Exception) {}
+
+          val appProps = fileObj.optJSONObject("appProperties")
+          var backupEmail = appProps?.optString("account_email", "") ?: ""
+          if (backupEmail.isBlank()) {
+            val desc = fileObj.optString("description", "")
+            if (desc.startsWith("account_email:")) {
+              backupEmail = desc.substringAfter("account_email:").trim().lowercase()
+            }
+          }
+
+          val cleanCurrentEmail = currentAccountEmail.trim().lowercase()
+          val cleanBackupEmail = backupEmail.trim().lowercase()
+          val mismatch = cleanCurrentEmail.isNotBlank() &&
+              cleanBackupEmail.isNotBlank() &&
+              cleanCurrentEmail != cleanBackupEmail
 
           return@withContext BackupMetadata(
             exists = true,
@@ -166,7 +216,9 @@ object GoogleDriveBackupManager {
             sizeString = formatFileSize(size),
             timestamp = timestamp,
             sizeBytes = size,
-            fileId = id
+            fileId = id,
+            accountEmail = backupEmail,
+            accountMismatch = mismatch
           )
         }
       }
@@ -183,14 +235,31 @@ object GoogleDriveBackupManager {
   suspend fun uploadToDriveAppData(
     stagedFile: File,
     accessToken: String,
-    existingFileId: String? = null
+    existingFileId: String? = null,
+    accountEmail: String = ""
   ): String? = withContext(Dispatchers.IO) {
     if (accessToken.isBlank()) return@withContext null
     try {
       val mediaType = "application/octet-stream".toMediaType()
+      val cleanEmail = accountEmail.trim().lowercase()
 
       if (!existingFileId.isNullOrBlank()) {
-        // Update media content of existing AppData file
+        // Update metadata and media content of existing AppData file
+        val metadataJson = JSONObject().apply {
+          val props = JSONObject()
+          if (cleanEmail.isNotBlank()) props.put("account_email", cleanEmail)
+          put("appProperties", props)
+          if (cleanEmail.isNotBlank()) put("description", "account_email:$cleanEmail")
+        }
+
+        val updateMetaUrl = "https://www.googleapis.com/drive/v3/files/$existingFileId"
+        val metaRequest = Request.Builder()
+          .url(updateMetaUrl)
+          .addHeader("Authorization", "Bearer $accessToken")
+          .patch(metadataJson.toString().toRequestBody("application/json; charset=UTF-8".toMediaType()))
+          .build()
+        httpClient.newCall(metaRequest).execute()
+
         val url = "https://www.googleapis.com/upload/drive/v3/files/$existingFileId?uploadType=media"
         val request = Request.Builder()
           .url(url)
@@ -209,6 +278,10 @@ object GoogleDriveBackupManager {
       val metadataJson = JSONObject().apply {
         put("name", BACKUP_FILE_NAME)
         put("parents", listOf("appDataFolder"))
+        val props = JSONObject()
+        if (cleanEmail.isNotBlank()) props.put("account_email", cleanEmail)
+        put("appProperties", props)
+        if (cleanEmail.isNotBlank()) put("description", "account_email:$cleanEmail")
       }
 
       val requestBody = MultipartBody.Builder()
@@ -290,14 +363,55 @@ object GoogleDriveBackupManager {
   }
 
   /**
-   * Formats timestamp into Bangla/English date string.
+   * Formats UTC timestamp or epoch millis into human-readable local date and time string.
+   * e.g. Bangla: "১৫ সেপ্টেম্বর ২০২৬, রাত ১০:৩০"
+   * e.g. English: "15 Sep 2026, 10:30 PM"
    */
   fun formatDateString(timestampMillis: Long, isBangla: Boolean = true): String {
     if (timestampMillis <= 0L) return if (isBangla) "কোন ব্যাকআপ পাওয়া যায়নি" else "No backup found"
-    val date = Date(timestampMillis)
-    val sdf = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.US)
-    val formatted = sdf.format(date)
-    return if (isBangla) convertToBanglaDigits(formatted) else formatted
+
+    val cal = java.util.Calendar.getInstance().apply {
+      timeInMillis = timestampMillis
+    }
+
+    val day = cal.get(java.util.Calendar.DAY_OF_MONTH)
+    val monthIndex = cal.get(java.util.Calendar.MONTH)
+    val year = cal.get(java.util.Calendar.YEAR)
+    val hourOfDay = cal.get(java.util.Calendar.HOUR_OF_DAY)
+    val minute = cal.get(java.util.Calendar.MINUTE)
+
+    var hour12 = cal.get(java.util.Calendar.HOUR)
+    if (hour12 == 0) hour12 = 12
+
+    if (!isBangla) {
+      val englishMonths = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+      val monthStr = if (monthIndex in 0..11) englishMonths[monthIndex] else ""
+      val amPm = if (cal.get(java.util.Calendar.AM_PM) == java.util.Calendar.AM) "AM" else "PM"
+      val minuteStr = String.format(Locale.US, "%02d", minute)
+      return "$day $monthStr $year, $hour12:$minuteStr $amPm"
+    }
+
+    val banglaMonths = arrayOf(
+      "জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন",
+      "জুলাই", "আগস্ট", "সেপ্টেম্বর", "অক্টোবর", "নভেম্বর", "ডিসেম্বর"
+    )
+    val monthStr = if (monthIndex in 0..11) banglaMonths[monthIndex] else ""
+
+    val timePeriod = when (hourOfDay) {
+      in 4..5 -> "ভোর"
+      in 6..11 -> "সকাল"
+      in 12..14 -> "দুপুর"
+      in 15..17 -> "বিকেল"
+      in 18..19 -> "সন্ধ্যা"
+      else -> "রাত"
+    }
+
+    val dayBn = convertToBanglaDigits(day.toString())
+    val yearBn = convertToBanglaDigits(year.toString())
+    val hourBn = convertToBanglaDigits(hour12.toString())
+    val minuteBn = convertToBanglaDigits(String.format(Locale.US, "%02d", minute))
+
+    return "$dayBn $monthStr $yearBn, $timePeriod $hourBn:$minuteBn"
   }
 
   private fun convertToBanglaDigits(input: String): String {
@@ -313,11 +427,18 @@ object GoogleDriveBackupManager {
   suspend fun checkForBackup(
     context: Context,
     accessToken: String? = null,
+    currentAccountEmail: String = "",
     isBangla: Boolean = true
   ): BackupMetadata = withContext(Dispatchers.IO) {
     try {
+      val userPrefs = UserPreferencesRepository(context)
+      val savedEmail = userPrefs.getLastDriveBackupEmail().ifBlank {
+        userPrefs.profileFlow.value.driverEmail
+      }
+      val cleanUserEmail = currentAccountEmail.ifBlank { savedEmail }.trim().lowercase()
+
       if (!accessToken.isNullOrBlank()) {
-        val remoteMetadata = queryDriveAppDataFile(accessToken)
+        val remoteMetadata = queryDriveAppDataFile(accessToken, cleanUserEmail)
         if (remoteMetadata != null && remoteMetadata.exists) {
           return@withContext remoteMetadata
         }
@@ -331,6 +452,10 @@ object GoogleDriveBackupManager {
         val sizeBytes = localBackupFile.length()
         val dateStr = formatDateString(lastModified, isBangla)
         val sizeStr = formatFileSize(sizeBytes, isBangla)
+        val backupEmail = userPrefs.getLastDriveBackupEmail()
+        val mismatch = cleanUserEmail.isNotBlank() &&
+            backupEmail.isNotBlank() &&
+            cleanUserEmail != backupEmail
 
         return@withContext BackupMetadata(
           exists = true,
@@ -338,22 +463,30 @@ object GoogleDriveBackupManager {
           sizeString = sizeStr,
           timestamp = lastModified,
           sizeBytes = sizeBytes,
-          fileId = "appDataFolder_$BACKUP_FILE_NAME"
+          fileId = "appDataFolder_$BACKUP_FILE_NAME",
+          accountEmail = backupEmail,
+          accountMismatch = mismatch
         )
       }
 
-      val userPrefs = UserPreferencesRepository(context)
       val lastTime = userPrefs.getLastDriveBackupTime()
       if (lastTime > 0L) {
         val dbFile = context.getDatabasePath(DB_NAME)
         val sizeBytes = if (dbFile.exists()) dbFile.length() else 102400L
+        val backupEmail = userPrefs.getLastDriveBackupEmail()
+        val mismatch = cleanUserEmail.isNotBlank() &&
+            backupEmail.isNotBlank() &&
+            cleanUserEmail != backupEmail
+
         return@withContext BackupMetadata(
           exists = true,
           dateString = formatDateString(lastTime, isBangla),
           sizeString = formatFileSize(sizeBytes, isBangla),
           timestamp = lastTime,
           sizeBytes = sizeBytes,
-          fileId = "appDataFolder_remote_$BACKUP_FILE_NAME"
+          fileId = "appDataFolder_remote_$BACKUP_FILE_NAME",
+          accountEmail = backupEmail,
+          accountMismatch = mismatch
         )
       }
 
@@ -370,9 +503,15 @@ object GoogleDriveBackupManager {
   suspend fun performBackup(
     context: Context,
     accessToken: String? = null,
+    currentAccountEmail: String = "",
     isBangla: Boolean = true
   ): BackupResult = withContext(Dispatchers.IO) {
     try {
+      val userPrefs = UserPreferencesRepository(context)
+      val cleanEmail = currentAccountEmail.ifBlank {
+        userPrefs.profileFlow.value.driverEmail
+      }.trim().lowercase()
+
       val isNotEmpty = verifyDatabaseNotEmpty(context)
       if (!isNotEmpty) {
         val msg = if (isBangla) "ডাটাবেজ ফাঁকা - ব্যাকআপ তৈরির মতো পর্যাপ্ত তথ্য নেই।" else "Database is empty. Backup skipped."
@@ -386,17 +525,19 @@ object GoogleDriveBackupManager {
 
       var driveFileId: String? = null
       if (!accessToken.isNullOrBlank()) {
-        val existingMeta = queryDriveAppDataFile(accessToken)
-        driveFileId = uploadToDriveAppData(stagedFile, accessToken, existingMeta?.fileId)
+        val existingMeta = queryDriveAppDataFile(accessToken, cleanEmail)
+        driveFileId = uploadToDriveAppData(stagedFile, accessToken, existingMeta?.fileId, cleanEmail)
       }
 
-      val userPrefs = UserPreferencesRepository(context)
       val db = AppDatabase.getDatabase(context)
       val tripsCount = db.tripDao().getAllTripsSnapshot().size
       val now = System.currentTimeMillis()
 
       userPrefs.setLastDriveBackupTime(now)
       userPrefs.setLastBackupTripCount(tripsCount)
+      if (cleanEmail.isNotBlank()) {
+        userPrefs.setLastDriveBackupEmail(cleanEmail)
+      }
 
       val metadata = BackupMetadata(
         exists = true,
@@ -404,10 +545,12 @@ object GoogleDriveBackupManager {
         sizeString = formatFileSize(stagedFile.length(), isBangla),
         timestamp = now,
         sizeBytes = stagedFile.length(),
-        fileId = driveFileId ?: "appDataFolder_$BACKUP_FILE_NAME"
+        fileId = driveFileId ?: "appDataFolder_$BACKUP_FILE_NAME",
+        accountEmail = cleanEmail,
+        accountMismatch = false
       )
 
-      Log.d(TAG, "Backup created successfully in AppData folder: size=${stagedFile.length()} bytes, driveId=$driveFileId")
+      Log.d(TAG, "Backup created successfully in AppData folder: size=${stagedFile.length()} bytes, driveId=$driveFileId, email=$cleanEmail")
       return@withContext BackupResult.Success(metadata)
     } catch (e: Exception) {
       Log.e(TAG, "Error performing backup: ${e.message}", e)
@@ -421,17 +564,35 @@ object GoogleDriveBackupManager {
   suspend fun restoreBackup(
     context: Context,
     accessToken: String? = null,
+    currentAccountEmail: String = "",
     isBangla: Boolean = true
   ): RestoreResult = withContext(Dispatchers.IO) {
     try {
+      val userPrefs = UserPreferencesRepository(context)
+      val cleanCurrentEmail = currentAccountEmail.ifBlank {
+        userPrefs.profileFlow.value.driverEmail
+      }.trim().lowercase()
+
       val backupFolder = File(context.filesDir, "drive_appdata_backup").apply { mkdirs() }
       val backupFile = File(backupFolder, BACKUP_FILE_NAME)
 
       if (!accessToken.isNullOrBlank()) {
-        val driveMeta = queryDriveAppDataFile(accessToken)
-        if (driveMeta?.fileId != null) {
-          downloadFromDriveAppData(driveMeta.fileId, accessToken, backupFile)
+        val driveMeta = queryDriveAppDataFile(accessToken, cleanCurrentEmail)
+        if (driveMeta != null && driveMeta.exists) {
+          if (driveMeta.accountMismatch) {
+            val err = if (isBangla) "ভিন্ন অ্যাকাউন্টের ব্যাকআপ ডাটা রিস্টোর করা যাবে না।" else "Cannot restore backup from a different account."
+            return@withContext RestoreResult.Error(err)
+          }
+          if (driveMeta.fileId != null) {
+            downloadFromDriveAppData(driveMeta.fileId, accessToken, backupFile)
+          }
         }
+      }
+
+      val savedBackupEmail = userPrefs.getLastDriveBackupEmail().trim().lowercase()
+      if (cleanCurrentEmail.isNotBlank() && savedBackupEmail.isNotBlank() && cleanCurrentEmail != savedBackupEmail) {
+        val err = if (isBangla) "ভিন্ন অ্যাকাউন্টের ব্যাকআপ ডাটা রিস্টোর করা যাবে না।" else "Cannot restore backup from a different account."
+        return@withContext RestoreResult.Error(err)
       }
 
       val sourceFile = if (backupFile.exists() && backupFile.length() > 0) {
@@ -466,6 +627,15 @@ object GoogleDriveBackupManager {
       FileInputStream(sourceFile).use { input ->
         FileOutputStream(targetDbFile).use { output ->
           input.copyTo(output)
+        }
+      }
+
+      val stagedWalFile = File(backupFolder, BACKUP_FILE_NAME + "-wal")
+      if (stagedWalFile.exists() && stagedWalFile.length() > 0) {
+        FileInputStream(stagedWalFile).use { input ->
+          FileOutputStream(walFile).use { output ->
+            input.copyTo(output)
+          }
         }
       }
 

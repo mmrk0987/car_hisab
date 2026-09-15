@@ -1155,17 +1155,34 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   private val _pendingRestoreMetadata = MutableStateFlow<BackupMetadata?>(null)
   val pendingRestoreMetadata: StateFlow<BackupMetadata?> = _pendingRestoreMetadata.asStateFlow()
 
+  private val _lastBackupTime = MutableStateFlow(userPrefsRepo.getLastDriveBackupTime())
+  val lastBackupTime: StateFlow<Long> = _lastBackupTime.asStateFlow()
+
+  private val _isBackingUp = MutableStateFlow(false)
+  val isBackingUp: StateFlow<Boolean> = _isBackingUp.asStateFlow()
+
+  private val _isRestoring = MutableStateFlow(false)
+  val isRestoring: StateFlow<Boolean> = _isRestoring.asStateFlow()
+
   fun clearBackupStatusMessage() {
     _backupStatusMessage.value = null
   }
 
-  fun triggerAutoBackup() {
+  fun triggerAutoBackup(email: String = userProfile.value.driverEmail) {
     viewModelScope.launch {
+      _isBackingUp.value = true
       val context = getApplication<Application>().applicationContext
       val isBangla = language.value == AppLanguage.BANGLA
-      val result = GoogleDriveBackupManager.performBackup(context, isBangla = isBangla)
+      val activeEmail = email.ifBlank { userProfile.value.driverEmail }.ifBlank { userProfile.value.savedEmail }
+      val result = GoogleDriveBackupManager.performBackup(
+        context = context,
+        currentAccountEmail = activeEmail,
+        isBangla = isBangla
+      )
+      _isBackingUp.value = false
       when (result) {
         is BackupResult.Success -> {
+          _lastBackupTime.value = result.metadata.timestamp
           val msg = if (isBangla) "গুগল ড্রাইভ ব্যাকআপ সম্পন্ন (${result.metadata.dateString})"
           else "Google Drive backup complete (${result.metadata.dateString})"
           _backupStatusMessage.value = msg
@@ -1174,6 +1191,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
           Log.d("CarHisabViewModel", "Auto-backup skipped: DB is empty")
         }
         is BackupResult.Error -> {
+          _backupStatusMessage.value = result.message
           Log.e("CarHisabViewModel", "Auto-backup failed: ${result.message}")
         }
       }
@@ -1184,9 +1202,17 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch {
       val context = getApplication<Application>().applicationContext
       val isBangla = language.value == AppLanguage.BANGLA
-      val metadata = GoogleDriveBackupManager.checkForBackup(context, isBangla = isBangla)
+      val activeEmail = userProfile.value.driverEmail.ifBlank { userProfile.value.savedEmail }
+      val metadata = GoogleDriveBackupManager.checkForBackup(
+        context = context,
+        currentAccountEmail = activeEmail,
+        isBangla = isBangla
+      )
       if (metadata.exists) {
-        _pendingRestoreMetadata.value = metadata
+        _lastBackupTime.value = metadata.timestamp
+        if (!metadata.accountMismatch) {
+          _pendingRestoreMetadata.value = metadata
+        }
       }
     }
   }
@@ -1196,16 +1222,32 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
   }
 
   fun performDriveRestore(
+    email: String = userProfile.value.driverEmail,
     onSuccess: (String) -> Unit = {},
     onError: (String) -> Unit = {}
   ) {
     viewModelScope.launch {
+      _isRestoring.value = true
       val context = getApplication<Application>().applicationContext
       val isBangla = language.value == AppLanguage.BANGLA
-      val result = GoogleDriveBackupManager.restoreBackup(context, isBangla = isBangla)
+      val activeEmail = email.ifBlank { userProfile.value.driverEmail }.ifBlank { userProfile.value.savedEmail }
+      val result = GoogleDriveBackupManager.restoreBackup(
+        context = context,
+        currentAccountEmail = activeEmail,
+        isBangla = isBangla
+      )
+      _isRestoring.value = false
       when (result) {
         is RestoreResult.Success -> {
           _pendingRestoreMetadata.value = null
+          val updatedMeta = GoogleDriveBackupManager.checkForBackup(
+            context = context,
+            currentAccountEmail = activeEmail,
+            isBangla = isBangla
+          )
+          if (updatedMeta.timestamp > 0L) {
+            _lastBackupTime.value = updatedMeta.timestamp
+          }
           val msg = if (isBangla)
             "সফলভাবে ${result.tripsCount} টি ট্রিপ ও ${result.bookingsCount} টি বুকিং রিস্টোর করা হয়েছে!"
           else
@@ -1214,6 +1256,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
           onSuccess(msg)
         }
         is RestoreResult.Error -> {
+          _backupStatusMessage.value = result.message
           onError(result.message)
         }
       }

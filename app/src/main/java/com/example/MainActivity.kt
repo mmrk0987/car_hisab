@@ -690,12 +690,18 @@ class MainActivity : FragmentActivity() {
               AppScreen.SETTINGS -> {
                 val allTripsForExport by viewModel.allTrips.collectAsStateWithLifecycle()
                 val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
+                val lastBackupTime by viewModel.lastBackupTime.collectAsStateWithLifecycle()
+                val isBackingUp by viewModel.isBackingUp.collectAsStateWithLifecycle()
+                val isRestoring by viewModel.isRestoring.collectAsStateWithLifecycle()
 
                 SettingsScreen(
                   language = language,
                   themeMode = themeMode,
                   profile = profile,
                   trips = allTripsForExport,
+                  lastBackupTime = lastBackupTime,
+                  isBackingUp = isBackingUp,
+                  isRestoring = isRestoring,
                   backupStatusMessage = backupStatusMessage,
                   onLanguageChange = { viewModel.setLanguage(it) },
                   onOpenLanguageSettings = { viewModel.navigateTo(AppScreen.LANGUAGE_SETTINGS) },
@@ -727,6 +733,19 @@ class MainActivity : FragmentActivity() {
                       trips = selectedTrips,
                       onSuccess = {
                         Toast.makeText(context, AppStrings.exportSuccess(language), Toast.LENGTH_SHORT).show()
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
+                  },
+                  onGoogleDriveBackup = {
+                    viewModel.triggerAutoBackup()
+                  },
+                  onGoogleDriveRestore = { _ ->
+                    viewModel.performDriveRestore(
+                      onSuccess = { msg ->
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                       },
                       onError = { err ->
                         Toast.makeText(context, err, Toast.LENGTH_LONG).show()
