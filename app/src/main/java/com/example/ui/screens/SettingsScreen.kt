@@ -34,6 +34,11 @@ import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material3.CircularProgressIndicator
+import com.example.data.backup.GoogleDriveBackupManager
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DateRange
@@ -657,27 +662,33 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Card 6: ANDROID AUTO BACKUP STATUS
+      // Card 6: GOOGLE DRIVE BACKUP & RESTORE
+      val activeGmail = profile.driverEmail.ifBlank { profile.savedEmail }.ifBlank { "অজানা অ্যাকাউন্ট" }
+      val formattedTimeStr = remember(lastBackupTime, language) {
+        if (lastBackupTime > 0L) {
+          GoogleDriveBackupManager.formatDateString(lastBackupTime, isBangla = language == AppLanguage.BANGLA)
+        } else {
+          if (language == AppLanguage.BANGLA) "কোন ব্যাকআপ পাওয়া যায়নি" else "No backup found"
+        }
+      }
+
       Card(
         modifier = Modifier
           .fillMaxWidth()
           .clip(RoundedCornerShape(16.dp))
-          .clickable { onOpenDriveBackup() }
           .testTag("settings_google_drive_card"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
       ) {
-        Row(
+        Column(
           modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.SpaceBetween
+            .padding(16.dp)
         ) {
           Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.fillMaxWidth()
           ) {
             Surface(
               modifier = Modifier.size(44.dp),
@@ -697,29 +708,128 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.width(14.dp))
 
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
               Text(
-                text = if (language == AppLanguage.BANGLA) "অটো ব্যাকআপ স্ট্যাটাস" else "Auto Backup Status",
-                fontSize = 14.5.sp,
+                text = if (language == AppLanguage.BANGLA) "গুগল ড্রাইভ ব্যাকআপ ও রিস্টোর" else "Google Drive Backup & Restore",
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
               )
               Spacer(modifier = Modifier.height(3.dp))
-              Text(
-                text = if (language == AppLanguage.BANGLA) "অটো ব্যাকআপ চালু আছে (গুগল ড্রাইভে স্বয়ংক্রিয়)" else "Auto Backup enabled (Automatic via Google)",
-                fontSize = 12.sp,
-                color = accentColor,
-                fontWeight = FontWeight.Medium
-              )
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                  imageVector = Icons.Default.AccountCircle,
+                  contentDescription = null,
+                  tint = accentColor,
+                  modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                  text = if (language == AppLanguage.BANGLA) "সক্রিয় অ্যাকাউন্ট: $activeGmail" else "Active Account: $activeGmail",
+                  fontSize = 11.5.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  fontWeight = FontWeight.Medium
+                )
+              }
             }
           }
 
-          Icon(
-            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-            contentDescription = "Open Drive Backup",
-            tint = accentColor,
-            modifier = Modifier.size(20.dp)
-          )
+          Spacer(modifier = Modifier.height(10.dp))
+
+          Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.fillMaxWidth()
+          ) {
+            Column(modifier = Modifier.padding(10.dp)) {
+              Text(
+                text = if (language == AppLanguage.BANGLA) "সর্বশেষ ব্যাকআপ: $formattedTimeStr" else "Last Backup: $formattedTimeStr",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (lastBackupTime > 0L) accentColor else MaterialTheme.colorScheme.onSurfaceVariant
+              )
+              if (!backupStatusMessage.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                  text = backupStatusMessage,
+                  fontSize = 11.sp,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+              }
+            }
+          }
+
+          Spacer(modifier = Modifier.height(12.dp))
+
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            Button(
+              onClick = { onGoogleDriveBackup() },
+              enabled = !isBackingUp && !isRestoring,
+              colors = ButtonDefaults.buttonColors(containerColor = accentColor),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier
+                .weight(1f)
+                .testTag("btn_settings_backup_now")
+            ) {
+              if (isBackingUp) {
+                CircularProgressIndicator(
+                  modifier = Modifier.size(16.dp),
+                  color = if (isDark) Color(0xFF022B1E) else Color.White,
+                  strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+              } else {
+                Icon(
+                  imageVector = Icons.Default.CloudUpload,
+                  contentDescription = null,
+                  modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+              }
+              Text(
+                text = if (language == AppLanguage.BANGLA) "ব্যাকআপ তৈরি করুন" else "Backup Now",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (isDark) Color(0xFF022B1E) else Color.White
+              )
+            }
+
+            Button(
+              onClick = { onGoogleDriveRestore(null) },
+              enabled = !isBackingUp && !isRestoring,
+              colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier
+                .weight(1f)
+                .testTag("btn_settings_restore")
+            ) {
+              if (isRestoring) {
+                CircularProgressIndicator(
+                  modifier = Modifier.size(16.dp),
+                  color = accentColor,
+                  strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+              } else {
+                Icon(
+                  imageVector = Icons.Default.CloudDownload,
+                  contentDescription = null,
+                  tint = accentColor,
+                  modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+              }
+              Text(
+                text = if (language == AppLanguage.BANGLA) "রিস্টোর করুন" else "Restore",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+              )
+            }
+          }
         }
       }
 
