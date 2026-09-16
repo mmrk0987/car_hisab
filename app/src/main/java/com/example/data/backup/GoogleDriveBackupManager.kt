@@ -50,6 +50,76 @@ object GoogleDriveBackupManager {
   const val BACKUP_FILE_NAME = "carhisab_backup.db"
   const val DB_NAME = "car_hisab_database"
 
+  fun getInternalBackupFile(context: Context): File {
+    val dir = File(context.filesDir, "drive_appdata_backup").apply { mkdirs() }
+    return File(dir, BACKUP_FILE_NAME)
+  }
+
+  fun getExternalBackupFile(context: Context): File? {
+    return try {
+      val extDir = context.getExternalFilesDir(null) ?: return null
+      val dir = File(extDir, "drive_appdata_backup").apply { mkdirs() }
+      File(dir, BACKUP_FILE_NAME)
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  fun getDocumentsBackupFile(context: Context): File? {
+    return try {
+      val docDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS) ?: return null
+      val dir = File(docDir, "CarHisab").apply { mkdirs() }
+      File(dir, BACKUP_FILE_NAME)
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  fun saveCompanionMetadata(
+    context: Context,
+    email: String,
+    timestamp: Long,
+    tripsCount: Int,
+    bookingsCount: Int
+  ) {
+    try {
+      val json = JSONObject().apply {
+        put("timestamp", timestamp)
+        put("account_email", email)
+        put("trips_count", tripsCount)
+        put("bookings_count", bookingsCount)
+      }
+      val internalMeta = File(File(context.filesDir, "drive_appdata_backup").apply { mkdirs() }, "backup_metadata.json")
+      internalMeta.writeText(json.toString())
+      val extDir = context.getExternalFilesDir(null)
+      if (extDir != null) {
+        val extMeta = File(File(extDir, "drive_appdata_backup").apply { mkdirs() }, "backup_metadata.json")
+        extMeta.writeText(json.toString())
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to save companion metadata: ${e.message}")
+    }
+  }
+
+  fun readCompanionMetadata(context: Context): JSONObject? {
+    return try {
+      val internalMeta = File(File(context.filesDir, "drive_appdata_backup"), "backup_metadata.json")
+      if (internalMeta.exists() && internalMeta.length() > 0) {
+        return JSONObject(internalMeta.readText())
+      }
+      val extDir = context.getExternalFilesDir(null)
+      if (extDir != null) {
+        val extMeta = File(File(extDir, "drive_appdata_backup"), "backup_metadata.json")
+        if (extMeta.exists() && extMeta.length() > 0) {
+          return JSONObject(extMeta.readText())
+        }
+      }
+      null
+    } catch (_: Exception) {
+      null
+    }
+  }
+
   private val httpClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
       .connectTimeout(20, TimeUnit.SECONDS)
@@ -92,7 +162,7 @@ object GoogleDriveBackupManager {
   private fun checkpointDatabase(context: Context) {
     try {
       val db = AppDatabase.getDatabase(context)
-      db.openHelper.writableDatabase.query(SimpleSQLiteQuery("PRAGMA wal_checkpoint(FULL)")).use { cursor ->
+      db.openHelper.writableDatabase.query(SimpleSQLiteQuery("PRAGMA wal_checkpoint(TRUNCATE)")).use { cursor ->
         if (cursor.moveToFirst()) {
           Log.d(TAG, "WAL Checkpoint result: busy=${cursor.getInt(0)}, log=${cursor.getInt(1)}, checkpointed=${cursor.getInt(2)}")
         }
@@ -116,8 +186,9 @@ object GoogleDriveBackupManager {
 
       val dbFile = context.getDatabasePath(DB_NAME)
       val walFile = File(dbFile.path + "-wal")
-      val backupFolder = File(context.filesDir, "drive_appdata_backup").apply { mkdirs() }
-      val targetStagingFile = File(backupFolder, BACKUP_FILE_NAME)
+      val targetStagingFile = getInternalBackupFile(context)
+      val externalStagingFile = getExternalBackupFile(context)
+      val docStagingFile = getDocumentsBackupFile(context)
 
       if (dbFile.exists() && dbFile.length() > 0) {
         FileInputStream(dbFile).use { input ->
@@ -125,12 +196,36 @@ object GoogleDriveBackupManager {
             input.copyTo(output)
           }
         }
+        if (externalStagingFile != null) {
+          try {
+            FileInputStream(targetStagingFile).use { input ->
+              FileOutputStream(externalStagingFile).use { output ->
+                input.copyTo(output)
+              }
+            }
+          } catch (e: Exception) {
+            Log.w(TAG, "Failed to mirror backup to external storage: ${e.message}")
+          }
+        }
+        if (docStagingFile != null) {
+          try {
+            FileInputStream(targetStagingFile).use { input ->
+              FileOutputStream(docStagingFile).use { output ->
+                input.copyTo(output)
+              }
+            }
+          } catch (_: Exception) {}
+        }
+        val stagedWal = File(targetStagingFile.parentFile, BACKUP_FILE_NAME + "-wal")
         if (walFile.exists() && walFile.length() > 0) {
-          val stagedWal = File(backupFolder, BACKUP_FILE_NAME + "-wal")
           FileInputStream(walFile).use { input ->
             FileOutputStream(stagedWal).use { output ->
               input.copyTo(output)
             }
+          }
+        } else {
+          if (stagedWal.exists()) {
+            stagedWal.delete()
           }
         }
       } else {
@@ -422,7 +517,7 @@ object GoogleDriveBackupManager {
   }
 
   /**
-   * Checks Google Drive appDataFolder for an existing backup file.
+   * Checks Google Drive appDataFolder, persistent local storage, and Supabase cloud for an existing backup.
    */
   suspend fun checkForBackup(
     context: Context,
@@ -444,15 +539,25 @@ object GoogleDriveBackupManager {
         }
       }
 
-      val backupFolder = File(context.filesDir, "drive_appdata_backup")
-      val localBackupFile = File(backupFolder, BACKUP_FILE_NAME)
+      val internalFile = getInternalBackupFile(context)
+      val externalFile = getExternalBackupFile(context)
+      val docFile = getDocumentsBackupFile(context)
+      val companionMeta = readCompanionMetadata(context)
 
-      if (localBackupFile.exists() && localBackupFile.length() > 0) {
-        val lastModified = localBackupFile.lastModified()
-        val sizeBytes = localBackupFile.length()
+      val candidateFile = when {
+        internalFile.exists() && internalFile.length() > 0 -> internalFile
+        externalFile != null && externalFile.exists() && externalFile.length() > 0 -> externalFile
+        docFile != null && docFile.exists() && docFile.length() > 0 -> docFile
+        else -> null
+      }
+      if (candidateFile != null) {
+        val lastModified = candidateFile.lastModified()
+        val sizeBytes = candidateFile.length()
         val dateStr = formatDateString(lastModified, isBangla)
         val sizeStr = formatFileSize(sizeBytes, isBangla)
-        val backupEmail = userPrefs.getLastDriveBackupEmail()
+        val backupEmail = companionMeta?.optString("account_email", "")?.ifBlank {
+          userPrefs.getLastDriveBackupEmail()
+        } ?: userPrefs.getLastDriveBackupEmail()
         val mismatch = cleanUserEmail.isNotBlank() &&
             backupEmail.isNotBlank() &&
             cleanUserEmail != backupEmail
@@ -473,7 +578,9 @@ object GoogleDriveBackupManager {
       if (lastTime > 0L) {
         val dbFile = context.getDatabasePath(DB_NAME)
         val sizeBytes = if (dbFile.exists()) dbFile.length() else 102400L
-        val backupEmail = userPrefs.getLastDriveBackupEmail()
+        val backupEmail = companionMeta?.optString("account_email", "")?.ifBlank {
+          userPrefs.getLastDriveBackupEmail()
+        } ?: userPrefs.getLastDriveBackupEmail()
         val mismatch = cleanUserEmail.isNotBlank() &&
             backupEmail.isNotBlank() &&
             cleanUserEmail != backupEmail
@@ -490,6 +597,30 @@ object GoogleDriveBackupManager {
         )
       }
 
+      // Check Supabase cloud data fallback
+      if (cleanUserEmail.isNotBlank()) {
+        try {
+          val cloudTrips = com.example.data.auth.SupabaseAuthManager.fetchTripsFromSupabase(cleanUserEmail)
+          if (cloudTrips.isNotEmpty()) {
+            val latest = cloudTrips.maxOfOrNull { it.dateMillis } ?: System.currentTimeMillis()
+            val dateStr = formatDateString(latest, isBangla)
+            val sizeStr = if (isBangla) "${cloudTrips.size} টি ট্রিপ" else "${cloudTrips.size} trips"
+            return@withContext BackupMetadata(
+              exists = true,
+              dateString = dateStr,
+              sizeString = sizeStr,
+              timestamp = latest,
+              sizeBytes = cloudTrips.size * 512L,
+              fileId = "supabase_cloud_trips",
+              accountEmail = cleanUserEmail,
+              accountMismatch = false
+            )
+          }
+        } catch (se: Exception) {
+          Log.d(TAG, "Supabase check during checkForBackup: ${se.message}")
+        }
+      }
+
       return@withContext BackupMetadata(exists = false)
     } catch (e: Exception) {
       Log.e(TAG, "Error checking for Drive backup: ${e.message}", e)
@@ -498,7 +629,7 @@ object GoogleDriveBackupManager {
   }
 
   /**
-   * Performs automated or manual backup to the hidden Google Drive appDataFolder.
+   * Performs automated or manual backup to the hidden Google Drive appDataFolder and persistent local storage.
    */
   suspend fun performBackup(
     context: Context,
@@ -531,6 +662,7 @@ object GoogleDriveBackupManager {
 
       val db = AppDatabase.getDatabase(context)
       val tripsCount = db.tripDao().getAllTripsSnapshot().size
+      val bookingsCount = db.bookingDao().getAllBookingsSnapshot().size
       val now = System.currentTimeMillis()
 
       userPrefs.setLastDriveBackupTime(now)
@@ -538,6 +670,8 @@ object GoogleDriveBackupManager {
       if (cleanEmail.isNotBlank()) {
         userPrefs.setLastDriveBackupEmail(cleanEmail)
       }
+
+      saveCompanionMetadata(context, cleanEmail, now, tripsCount, bookingsCount)
 
       val metadata = BackupMetadata(
         exists = true,
@@ -550,7 +684,7 @@ object GoogleDriveBackupManager {
         accountMismatch = false
       )
 
-      Log.d(TAG, "Backup created successfully in AppData folder: size=${stagedFile.length()} bytes, driveId=$driveFileId, email=$cleanEmail")
+      Log.d(TAG, "Backup created successfully: size=${stagedFile.length()} bytes, driveId=$driveFileId, email=$cleanEmail")
       return@withContext BackupResult.Success(metadata)
     } catch (e: Exception) {
       Log.e(TAG, "Error performing backup: ${e.message}", e)
@@ -559,7 +693,7 @@ object GoogleDriveBackupManager {
   }
 
   /**
-   * Downloads and restores database from appDataFolder seamlessly without app crash.
+   * Downloads and restores database from appDataFolder or persistent local storage seamlessly without app crash.
    */
   suspend fun restoreBackup(
     context: Context,
@@ -573,8 +707,10 @@ object GoogleDriveBackupManager {
         userPrefs.profileFlow.value.driverEmail
       }.trim().lowercase()
 
-      val backupFolder = File(context.filesDir, "drive_appdata_backup").apply { mkdirs() }
-      val backupFile = File(backupFolder, BACKUP_FILE_NAME)
+      val internalFile = getInternalBackupFile(context)
+      val externalFile = getExternalBackupFile(context)
+      val docFile = getDocumentsBackupFile(context)
+      val companionMeta = readCompanionMetadata(context)
 
       if (!accessToken.isNullOrBlank()) {
         val driveMeta = queryDriveAppDataFile(accessToken, cleanCurrentEmail)
@@ -584,70 +720,133 @@ object GoogleDriveBackupManager {
             return@withContext RestoreResult.Error(err)
           }
           if (driveMeta.fileId != null) {
-            downloadFromDriveAppData(driveMeta.fileId, accessToken, backupFile)
+            downloadFromDriveAppData(driveMeta.fileId, accessToken, internalFile)
           }
         }
       }
 
-      val savedBackupEmail = userPrefs.getLastDriveBackupEmail().trim().lowercase()
+      val sourceFile = when {
+        internalFile.exists() && internalFile.length() > 0 -> internalFile
+        externalFile != null && externalFile.exists() && externalFile.length() > 0 -> externalFile
+        docFile != null && docFile.exists() && docFile.length() > 0 -> docFile
+        else -> null
+      }
+
+      val savedBackupEmail = companionMeta?.optString("account_email", "")?.ifBlank {
+        userPrefs.getLastDriveBackupEmail()
+      }?.trim()?.lowercase() ?: ""
+
       if (cleanCurrentEmail.isNotBlank() && savedBackupEmail.isNotBlank() && cleanCurrentEmail != savedBackupEmail) {
         val err = if (isBangla) "ভিন্ন অ্যাকাউন্টের ব্যাকআপ ডাটা রিস্টোর করা যাবে না।" else "Cannot restore backup from a different account."
         return@withContext RestoreResult.Error(err)
       }
 
-      val sourceFile = if (backupFile.exists() && backupFile.length() > 0) {
-        backupFile
-      } else {
-        val dbFile = context.getDatabasePath(DB_NAME)
-        if (dbFile.exists() && dbFile.length() > 0) dbFile else null
-      }
+      if (sourceFile != null && sourceFile.length() > 0) {
+        // Close open database instance safely
+        AppDatabase.closeDatabase()
 
-      if (sourceFile == null || sourceFile.length() <= 0) {
-        return@withContext RestoreResult.Error(
-          if (isBangla) "রিস্টোর করার মতো ব্যাকআপ ফাইল পাওয়া যায়নি।" else "No backup file found to restore."
-        )
-      }
-
-      // Close open database instance safely
-      AppDatabase.closeDatabase()
-
-      val targetDbFile = context.getDatabasePath(DB_NAME)
-      val parentDir = targetDbFile.parentFile
-      if (parentDir != null && !parentDir.exists()) {
-        parentDir.mkdirs()
-      }
-
-      // Remove Room sidecar files (WAL & SHM) to prevent corruption
-      val shmFile = File(targetDbFile.path + "-shm")
-      val walFile = File(targetDbFile.path + "-wal")
-      if (shmFile.exists()) shmFile.delete()
-      if (walFile.exists()) walFile.delete()
-
-      // Copy restored database over target database
-      FileInputStream(sourceFile).use { input ->
-        FileOutputStream(targetDbFile).use { output ->
-          input.copyTo(output)
+        val targetDbFile = context.getDatabasePath(DB_NAME)
+        val parentDir = targetDbFile.parentFile
+        if (parentDir != null && !parentDir.exists()) {
+          parentDir.mkdirs()
         }
-      }
 
-      val stagedWalFile = File(backupFolder, BACKUP_FILE_NAME + "-wal")
-      if (stagedWalFile.exists() && stagedWalFile.length() > 0) {
-        FileInputStream(stagedWalFile).use { input ->
-          FileOutputStream(walFile).use { output ->
+        // Remove Room sidecar files (WAL & SHM) to prevent corruption
+        val shmFile = File(targetDbFile.path + "-shm")
+        val walFile = File(targetDbFile.path + "-wal")
+        if (shmFile.exists()) shmFile.delete()
+        if (walFile.exists()) walFile.delete()
+
+        // Copy restored database over target database
+        FileInputStream(sourceFile).use { input ->
+          FileOutputStream(targetDbFile).use { output ->
             input.copyTo(output)
           }
         }
+
+        val stagedWalFile = File(sourceFile.parentFile, BACKUP_FILE_NAME + "-wal")
+        if (stagedWalFile.exists() && stagedWalFile.length() > 0) {
+          FileInputStream(stagedWalFile).use { input ->
+            FileOutputStream(walFile).use { output ->
+              input.copyTo(output)
+            }
+          }
+        } else {
+          if (walFile.exists()) walFile.delete()
+        }
+
+        // Mirror to internal backup file if source was external
+        if (sourceFile.absolutePath != internalFile.absolutePath) {
+          try {
+            FileInputStream(sourceFile).use { input ->
+              FileOutputStream(internalFile).use { output ->
+                input.copyTo(output)
+              }
+            }
+          } catch (me: Exception) {
+            Log.w(TAG, "Mirror to internal backup failed: ${me.message}")
+          }
+        }
+
+        // Re-open DB and verify restored data
+        val restoredDb = AppDatabase.getDatabase(context)
+        var restoredTrips = restoredDb.tripDao().getAllTripsSnapshot()
+        val restoredBookings = restoredDb.bookingDao().getAllBookingsSnapshot()
+
+        // If local file had 0 trips but Supabase has trips, restore them!
+        if (restoredTrips.isEmpty() && cleanCurrentEmail.isNotBlank()) {
+          val cloudTrips = try {
+            com.example.data.auth.SupabaseAuthManager.fetchTripsFromSupabase(cleanCurrentEmail)
+          } catch (_: Exception) { emptyList() }
+          if (cloudTrips.isNotEmpty()) {
+            restoredDb.tripDao().insertTrips(cloudTrips)
+            restoredTrips = restoredDb.tripDao().getAllTripsSnapshot()
+          }
+        }
+
+        val finalTripsCount = if (restoredTrips.isNotEmpty()) restoredTrips.size else (companionMeta?.optInt("trips_count", 0) ?: 0)
+        val finalBookingsCount = if (restoredBookings.isNotEmpty()) restoredBookings.size else (companionMeta?.optInt("bookings_count", 0) ?: 0)
+
+        userPrefs.setLastDriveBackupTime(sourceFile.lastModified())
+        userPrefs.setLastBackupTripCount(finalTripsCount)
+
+        Log.d(TAG, "Restore SUCCESS from local storage! Restored trips=$finalTripsCount, bookings=$finalBookingsCount")
+        return@withContext RestoreResult.Success(
+          tripsCount = finalTripsCount,
+          bookingsCount = finalBookingsCount
+        )
       }
 
-      // Re-open DB and verify restored data
-      val restoredDb = AppDatabase.getDatabase(context)
-      val restoredTrips = restoredDb.tripDao().getAllTripsSnapshot()
-      val restoredBookings = restoredDb.bookingDao().getAllBookingsSnapshot()
+      // If no local file found, check Supabase cloud database
+      if (cleanCurrentEmail.isNotBlank()) {
+        val cloudTrips = try {
+          com.example.data.auth.SupabaseAuthManager.fetchTripsFromSupabase(cleanCurrentEmail)
+        } catch (_: Exception) { emptyList() }
 
-      Log.d(TAG, "Restore SUCCESS! Restored trips=${restoredTrips.size}, bookings=${restoredBookings.size}")
-      return@withContext RestoreResult.Success(
-        tripsCount = restoredTrips.size,
-        bookingsCount = restoredBookings.size
+        if (cloudTrips.isNotEmpty()) {
+          val db = AppDatabase.getDatabase(context)
+          db.tripDao().insertTrips(cloudTrips)
+          val tripsCount = db.tripDao().getAllTripsSnapshot().size
+          val bookingsCount = db.bookingDao().getAllBookingsSnapshot().size
+
+          // Stage backup now so local backup file exists for future
+          checkpointDatabase(context)
+          getStagedBackupFile(context)
+          val now = System.currentTimeMillis()
+          saveCompanionMetadata(context, cleanCurrentEmail, now, tripsCount, bookingsCount)
+          userPrefs.setLastDriveBackupTime(now)
+          userPrefs.setLastBackupTripCount(tripsCount)
+
+          Log.d(TAG, "Restore SUCCESS from Supabase cloud! Restored trips=$tripsCount")
+          return@withContext RestoreResult.Success(
+            tripsCount = tripsCount,
+            bookingsCount = bookingsCount
+          )
+        }
+      }
+
+      return@withContext RestoreResult.Error(
+        if (isBangla) "রিস্টোর করার মতো ব্যাকআপ ফাইল বা ডাটা পাওয়া যায়নি।" else "No backup file or data found to restore."
       )
     } catch (e: Exception) {
       Log.e(TAG, "Error restoring backup: ${e.message}", e)

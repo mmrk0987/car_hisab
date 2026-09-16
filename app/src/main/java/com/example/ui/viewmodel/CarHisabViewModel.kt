@@ -27,11 +27,13 @@ import com.example.data.repository.UserPreferencesRepository
 import com.example.ui.i18n.AppLanguage
 import com.example.ui.theme.AppThemeMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
@@ -397,8 +399,22 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
+  // Database recreation trigger for restore
+  private val _databaseVersion = MutableStateFlow(0)
+
+  fun notifyDatabaseUpdated() {
+    val db = AppDatabase.getDatabase(getApplication())
+    tripRepo.updateDao(db.tripDao())
+    bookingRepo.updateDao(db.bookingDao())
+    _databaseVersion.value++
+  }
+
   // Trips from Room
-  val allTrips: StateFlow<List<TripEntity>> = tripRepo.allTrips
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val allTrips: StateFlow<List<TripEntity>> = _databaseVersion
+    .flatMapLatest {
+      tripRepo.allTrips
+    }
     .stateIn(
       scope = viewModelScope,
       started = SharingStarted.WhileSubscribed(5000),
@@ -406,14 +422,22 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     )
 
   // Bookings from Room
-  val allBookings: StateFlow<List<BookingEntity>> = bookingRepo.allBookings
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val allBookings: StateFlow<List<BookingEntity>> = _databaseVersion
+    .flatMapLatest {
+      bookingRepo.allBookings
+    }
     .stateIn(
       scope = viewModelScope,
       started = SharingStarted.WhileSubscribed(5000),
       initialValue = emptyList()
     )
 
-  val upcomingBookings: StateFlow<List<BookingEntity>> = bookingRepo.upcomingBookings
+  @OptIn(ExperimentalCoroutinesApi::class)
+  val upcomingBookings: StateFlow<List<BookingEntity>> = _databaseVersion
+    .flatMapLatest {
+      bookingRepo.upcomingBookings
+    }
     .stateIn(
       scope = viewModelScope,
       started = SharingStarted.WhileSubscribed(5000),
@@ -1240,6 +1264,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       when (result) {
         is RestoreResult.Success -> {
           _pendingRestoreMetadata.value = null
+          notifyDatabaseUpdated()
           val updatedMeta = GoogleDriveBackupManager.checkForBackup(
             context = context,
             currentAccountEmail = activeEmail,

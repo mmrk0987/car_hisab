@@ -173,15 +173,18 @@ class UserPreferencesRepository(context: Context) {
   fun updateRememberEmail(email: String, remember: Boolean) {
     val current = _profileFlow.value
     val newSavedEmail = if (remember) email else ""
+    val driverEmailToStore = if (current.driverEmail.isBlank()) email else current.driverEmail
     val updated = current.copy(
       rememberEmail = remember,
       savedEmail = newSavedEmail,
-      driverEmail = if (current.driverEmail.isBlank()) email else current.driverEmail,
+      driverEmail = driverEmailToStore,
       isLoggedIn = true
     )
     prefs.edit()
       .putBoolean("key_remember_email", remember)
       .putString("key_saved_email", newSavedEmail)
+      .putBoolean("key_logged_in", true)
+      .putString("key_driver_email", driverEmailToStore)
       .apply()
     _profileFlow.value = updated
   }

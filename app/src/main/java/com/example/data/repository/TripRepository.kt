@@ -5,8 +5,12 @@ import com.example.data.db.TripDao
 import com.example.data.model.TripEntity
 import kotlinx.coroutines.flow.Flow
 
-class TripRepository(private val tripDao: TripDao) {
-  val allTrips: Flow<List<TripEntity>> = tripDao.getAllTrips()
+class TripRepository(private var tripDao: TripDao) {
+  val allTrips: Flow<List<TripEntity>> get() = tripDao.getAllTrips()
+
+  fun updateDao(newDao: TripDao) {
+    this.tripDao = newDao
+  }
 
   /**
    * Validate trip mandatory fields before database insertion

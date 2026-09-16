@@ -4,9 +4,13 @@ import com.example.data.db.BookingDao
 import com.example.data.model.BookingEntity
 import kotlinx.coroutines.flow.Flow
 
-class BookingRepository(private val bookingDao: BookingDao) {
-  val allBookings: Flow<List<BookingEntity>> = bookingDao.getAllBookings()
-  val upcomingBookings: Flow<List<BookingEntity>> = bookingDao.getUpcomingBookings()
+class BookingRepository(private var bookingDao: BookingDao) {
+  val allBookings: Flow<List<BookingEntity>> get() = bookingDao.getAllBookings()
+  val upcomingBookings: Flow<List<BookingEntity>> get() = bookingDao.getUpcomingBookings()
+
+  fun updateDao(newDao: BookingDao) {
+    this.bookingDao = newDao
+  }
 
   suspend fun getAllBookingsSnapshot(): List<BookingEntity> = bookingDao.getAllBookingsSnapshot()
 

@@ -605,4 +605,71 @@ object SupabaseAuthManager {
       "Supabase ত্রুটি (HTTP $statusCode)"
     }
   }
+
+  /**
+   * Fetches trips from Supabase cloud database to restore locally.
+   */
+  suspend fun fetchTripsFromSupabase(
+    userId: String = "",
+    baseUrl: String = DEFAULT_SUPABASE_URL,
+    anonKey: String = DEFAULT_ANON_KEY,
+    accessToken: String? = null
+  ): List<com.example.data.model.TripEntity> = withContext(Dispatchers.IO) {
+    try {
+      val rootUrl = cleanBaseUrl(baseUrl)
+      val key = anonKey.ifBlank { DEFAULT_ANON_KEY }
+      val authHeader = if (!accessToken.isNullOrBlank()) "Bearer $accessToken" else "Bearer $key"
+
+      val queryParam = if (userId.isNotBlank()) {
+        "user_id=eq.$userId&select=*&order=date_millis.desc"
+      } else {
+        "select=*&order=date_millis.desc"
+      }
+      val endpoint = "$rootUrl/rest/v1/trips?$queryParam"
+
+      val request = Request.Builder()
+        .url(endpoint)
+        .addHeader("apikey", key)
+        .addHeader("Authorization", authHeader)
+        .get()
+        .build()
+
+      val response = httpClient.newCall(request).execute()
+      val respBody = response.body?.string() ?: ""
+      if (response.isSuccessful) {
+        val jsonArray = org.json.JSONArray(respBody)
+        val list = mutableListOf<com.example.data.model.TripEntity>()
+        for (i in 0 until jsonArray.length()) {
+          val obj = jsonArray.getJSONObject(i)
+          list.add(
+            com.example.data.model.TripEntity(
+              id = obj.optLong("id", 0L),
+              userId = obj.optString("user_id", userId),
+              vehicleId = obj.optString("vehicle_id", ""),
+              dateMillis = obj.optLong("date_millis", 0L),
+              dateString = obj.optString("date_string", ""),
+              place = obj.optString("place", ""),
+              rent = obj.optDouble("rent", 0.0),
+              gratuity = obj.optDouble("gratuity", 0.0),
+              maintenanceCost = obj.optDouble("maintenance_cost", 0.0),
+              kmDriven = obj.optDouble("km_driven", 0.0),
+              description = obj.optString("description", ""),
+              passengerName = obj.optString("passenger_name", ""),
+              passengerPhone = obj.optString("passenger_phone", ""),
+              income = obj.optDouble("income", 0.0),
+              profit = obj.optDouble("profit", 0.0)
+            )
+          )
+        }
+        Log.d("SupabaseRestore", "Successfully fetched ${list.size} trips from Supabase")
+        list
+      } else {
+        Log.w("SupabaseRestore", "Failed to fetch trips from Supabase: HTTP ${response.code}")
+        emptyList()
+      }
+    } catch (e: Exception) {
+      Log.e("SupabaseRestore", "Exception fetching trips from Supabase: ${e.message}", e)
+      emptyList()
+    }
+  }
 }
