@@ -1,33 +1,33 @@
 package com.example.data.backup
 
-import android.accounts.Account
-import android.accounts.AccountManager
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Environment
 import android.util.Log
+import androidx.core.content.FileProvider
 import androidx.sqlite.db.SimpleSQLiteQuery
 import com.example.data.db.AppDatabase
+import com.example.data.model.BookingEntity
 import com.example.data.model.TripEntity
 import com.example.data.repository.UserPreferencesRepository
-import com.google.android.gms.auth.GoogleAuthUtil
-import com.google.android.gms.auth.UserRecoverableAuthException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
-import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 data class BackupMetadata(
   val exists: Boolean = false,
@@ -58,72 +58,38 @@ sealed class RestoreResult {
 }
 
 object GoogleDriveBackupManager {
-  private const val TAG = "GoogleDriveBackup"
-  const val DRIVE_APPDATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
-  const val BACKUP_FILE_NAME = "carhisab_backup.db"
-  const val MASTER_DB_NAME = "CarHisab_Master.db"
+  private const val TAG = "CarHisabBackup"
   const val DB_NAME = "car_hisab_database"
+  const val MASTER_DB_NAME = "CarHisab_Master.db"
   const val MANIFEST_FILE_NAME = "CarHisab_Backup_Manifest.json"
+
+  suspend fun verifyDatabaseNotEmpty(context: Context): Boolean = withContext(Dispatchers.IO) {
+    try {
+      val db = AppDatabase.getDatabase(context)
+      val trips = db.tripDao().getAllTripsSnapshot()
+      val bookings = db.bookingDao().getAllBookingsSnapshot()
+      trips.isNotEmpty() || bookings.isNotEmpty()
+    } catch (_: Exception) {
+      false
+    }
+  }
 
   fun getBackupDirectory(context: Context): File {
     return File(context.filesDir, "drive_appdata_backup").apply { mkdirs() }
   }
 
-  fun getInternalBackupFile(context: Context): File {
-    return File(getBackupDirectory(context), BACKUP_FILE_NAME)
-  }
-
-  fun getExternalBackupFile(context: Context): File? {
-    return try {
-      val extDir = context.getExternalFilesDir(null) ?: return null
-      val dir = File(extDir, "drive_appdata_backup").apply { mkdirs() }
-      File(dir, BACKUP_FILE_NAME)
-    } catch (_: Exception) {
-      null
-    }
-  }
-
   fun getDocumentsBackupDir(context: Context): File? {
     return try {
-      val docDir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOCUMENTS) ?: return null
+      val docDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS) ?: return null
       File(docDir, "CarHisab").apply { mkdirs() }
     } catch (_: Exception) {
       null
     }
   }
 
-  fun getDocumentsBackupFile(context: Context): File? {
-    val dir = getDocumentsBackupDir(context) ?: return null
-    return File(dir, BACKUP_FILE_NAME)
-  }
-
-  /**
-   * Helper to retrieve Google Drive OAuth 2.0 Access Token from device Google Accounts
-   */
-  suspend fun getGoogleDriveAccessToken(context: Context, preferredEmail: String = ""): String? = withContext(Dispatchers.IO) {
-    try {
-      val am = AccountManager.get(context)
-      val googleAccounts = am.getAccountsByType("com.google")
-      if (googleAccounts.isEmpty()) {
-        Log.w(TAG, "No Google account found on device for Drive token.")
-        return@withContext null
-      }
-      val targetAccount: Account = if (preferredEmail.isNotBlank()) {
-        googleAccounts.firstOrNull { it.name.equals(preferredEmail, ignoreCase = true) } ?: googleAccounts.first()
-      } else {
-        googleAccounts.first()
-      }
-      val scope = "oauth2:$DRIVE_APPDATA_SCOPE"
-      val token = GoogleAuthUtil.getToken(context, targetAccount, scope)
-      Log.d(TAG, "Google Drive token acquired for ${targetAccount.name}")
-      token
-    } catch (e: UserRecoverableAuthException) {
-      Log.w(TAG, "User consent or action required for Drive scope: ${e.message}")
-      null
-    } catch (e: Exception) {
-      Log.w(TAG, "Google Drive token error: ${e.message}")
-      null
-    }
+  fun getDefaultBackupZipName(): String {
+    val dateStr = SimpleDateFormat("yyyy_MM_dd", Locale.US).format(Date())
+    return "CarHisab_Backup_$dateStr.zip"
   }
 
   /**
@@ -162,8 +128,7 @@ object GoogleDriveBackupManager {
   }
 
   /**
-   * Ensures trip's dateMillis and dateString are consistent and valid,
-   * guaranteeing that historical trips are strictly tied to their actual month.
+   * Ensures trip's dateMillis and dateString are consistent and valid.
    */
   fun ensureValidTripDate(trip: TripEntity): TripEntity {
     val formats = listOf(
@@ -208,36 +173,10 @@ object GoogleDriveBackupManager {
     )
   }
 
-  private val httpClient: OkHttpClient by lazy {
-    OkHttpClient.Builder()
-      .connectTimeout(20, TimeUnit.SECONDS)
-      .readTimeout(30, TimeUnit.SECONDS)
-      .writeTimeout(30, TimeUnit.SECONDS)
-      .build()
-  }
-
   /**
-   * Verifies local database has data before backup.
+   * Checkpoints SQLite WAL so all in-memory changes are written to the main DB file.
    */
-  suspend fun verifyDatabaseNotEmpty(context: Context): Boolean = withContext(Dispatchers.IO) {
-    try {
-      val db = AppDatabase.getDatabase(context)
-      val tripsCount = db.tripDao().getAllTripsSnapshot().size
-      val bookingsCount = db.bookingDao().getAllBookingsSnapshot().size
-      val hasData = tripsCount > 0 || bookingsCount > 0
-      if (!hasData) {
-        Log.w(TAG, "Database has 0 trips and 0 bookings.")
-        return@withContext false
-      }
-      checkpointDatabase(context)
-      true
-    } catch (e: Exception) {
-      Log.e(TAG, "Error verifying database content: ${e.message}", e)
-      false
-    }
-  }
-
-  private fun checkpointDatabase(context: Context) {
+  fun checkpointDatabase(context: Context) {
     try {
       val db = AppDatabase.getDatabase(context)
       db.openHelper.writableDatabase.query(SimpleSQLiteQuery("PRAGMA wal_checkpoint(TRUNCATE)")).use { cursor ->
@@ -250,63 +189,18 @@ object GoogleDriveBackupManager {
     }
   }
 
-  suspend fun getStagedBackupFile(context: Context): File? = withContext(Dispatchers.IO) {
-    try {
-      if (!verifyDatabaseNotEmpty(context)) return@withContext null
-      checkpointDatabase(context)
-      val dbFile = context.getDatabasePath(DB_NAME)
-      val targetStagingFile = getInternalBackupFile(context)
-      val externalStagingFile = getExternalBackupFile(context)
-      val docStagingFile = getDocumentsBackupFile(context)
-
-      if (dbFile.exists() && dbFile.length() > 0) {
-        FileInputStream(dbFile).use { input ->
-          FileOutputStream(targetStagingFile).use { output ->
-            input.copyTo(output)
-          }
-        }
-        if (externalStagingFile != null) {
-          try {
-            FileInputStream(targetStagingFile).use { input ->
-              FileOutputStream(externalStagingFile).use { output ->
-                input.copyTo(output)
-              }
-            }
-          } catch (_: Exception) {}
-        }
-        if (docStagingFile != null) {
-          try {
-            FileInputStream(targetStagingFile).use { input ->
-              FileOutputStream(docStagingFile).use { output ->
-                input.copyTo(output)
-              }
-            }
-          } catch (_: Exception) {}
-        }
-      }
-      if (targetStagingFile.exists() && targetStagingFile.length() > 0) targetStagingFile else null
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed staging database: ${e.message}", e)
-      null
-    }
-  }
-
   /**
-   * Generates identifiable, month-separated structured JSON backup files for every month
-   * e.g., CarHisab_2026_09_September_Trips.json
+   * Generates month-separated JSON files for each month distinctly.
    */
-  suspend fun generateMonthlyArchiveFiles(
-    context: Context,
+  fun generateMonthlyArchiveFiles(
+    targetDir: File,
     trips: List<TripEntity>,
     accountEmail: String,
     driverName: String,
     vehicleId: String
-  ): List<File> = withContext(Dispatchers.IO) {
+  ): List<File> {
     val resultFiles = mutableListOf<File>()
     try {
-      val internalDir = getBackupDirectory(context)
-      val docDir = getDocumentsBackupDir(context)
-
       val monthGroups = trips.groupBy { getMonthKey(it.dateMillis) }
       val englishMonthNames = arrayOf(
         "January", "February", "March", "April", "May", "June",
@@ -365,16 +259,9 @@ object GoogleDriveBackupManager {
           put("trips", tripsArray)
         }
 
-        val internalFile = File(internalDir, fileName)
-        internalFile.writeText(json.toString(2))
-        resultFiles.add(internalFile)
-
-        if (docDir != null) {
-          try {
-            val docFile = File(docDir, fileName)
-            docFile.writeText(json.toString(2))
-          } catch (_: Exception) {}
-        }
+        val file = File(targetDir, fileName)
+        file.writeText(json.toString(2))
+        resultFiles.add(file)
 
         val monthMeta = JSONObject().apply {
           put("month_key", monthKey)
@@ -386,7 +273,6 @@ object GoogleDriveBackupManager {
         manifestArray.put(monthMeta)
       }
 
-      // Write master manifest
       val manifestJson = JSONObject().apply {
         put("app", "CarHisab")
         put("account_email", accountEmail)
@@ -397,152 +283,567 @@ object GoogleDriveBackupManager {
         put("total_months", monthGroups.size)
         put("months", manifestArray)
       }
-      File(internalDir, MANIFEST_FILE_NAME).writeText(manifestJson.toString(2))
-      if (docDir != null) {
+      val manifestFile = File(targetDir, MANIFEST_FILE_NAME)
+      manifestFile.writeText(manifestJson.toString(2))
+      resultFiles.add(manifestFile)
+    } catch (e: Exception) {
+      Log.e(TAG, "Error generating monthly files: ${e.message}", e)
+    }
+    return resultFiles
+  }
+
+  /**
+   * Prepares a self-contained, complete backup ZIP archive file.
+   * Contains CarHisab_Master.db, individual monthly JSONs, and Manifest.json.
+   */
+  suspend fun prepareBackupZip(
+    context: Context,
+    overrideAccountEmail: String = ""
+  ): File? = withContext(Dispatchers.IO) {
+    try {
+      checkpointDatabase(context)
+      val db = AppDatabase.getDatabase(context)
+      val rawTrips = db.tripDao().getAllTripsSnapshot()
+      val validTrips = rawTrips.map { ensureValidTripDate(it) }
+      val bookings = db.bookingDao().getAllBookingsSnapshot()
+
+      if (validTrips.isEmpty() && bookings.isEmpty()) {
+        Log.w(TAG, "Database has 0 trips and 0 bookings.")
+        return@withContext null
+      }
+
+      val userPrefs = UserPreferencesRepository(context)
+      val profile = userPrefs.profileFlow.value
+      val cleanEmail = overrideAccountEmail.ifBlank {
+        profile.driverEmail.ifBlank { profile.savedEmail }
+      }.trim().lowercase()
+      val driverName = profile.driverName.ifBlank { "Driver" }
+      val vehicleId = profile.carNumber.ifBlank { profile.carName }.ifBlank { "Car" }
+
+      val stagingDir = File(context.cacheDir, "backup_staging_${System.currentTimeMillis()}").apply { mkdirs() }
+      val dbFile = context.getDatabasePath(DB_NAME)
+      val stagedDbFile = File(stagingDir, MASTER_DB_NAME)
+
+      if (dbFile.exists() && dbFile.length() > 0) {
+        FileInputStream(dbFile).use { input ->
+          FileOutputStream(stagedDbFile).use { output ->
+            input.copyTo(output)
+          }
+        }
+      }
+
+      val monthlyFiles = generateMonthlyArchiveFiles(
+        targetDir = stagingDir,
+        trips = validTrips,
+        accountEmail = cleanEmail,
+        driverName = driverName,
+        vehicleId = vehicleId
+      )
+
+      // Also generate bookings archive if bookings exist
+      if (bookings.isNotEmpty()) {
         try {
-          File(docDir, MANIFEST_FILE_NAME).writeText(manifestJson.toString(2))
+          val bJson = JSONObject().apply {
+            put("app_name", "CarHisab")
+            put("file_type", "bookings_archive")
+            put("account_email", cleanEmail)
+            put("driver_name", driverName)
+            put("vehicle_id", vehicleId)
+            val bArr = JSONArray()
+            for (b in bookings) {
+              bArr.put(JSONObject().apply {
+                put("id", b.id)
+                put("passenger_name", b.passengerName)
+                put("passenger_phone", b.passengerPhone)
+                put("pickup_location", b.pickupLocation)
+                put("drop_location", b.dropLocation)
+                put("trip_date_millis", b.tripDateMillis)
+                put("trip_date_string", b.tripDateString)
+                put("trip_time_string", b.tripTimeString)
+                put("total_fare", b.totalFare)
+                put("advance_paid", b.advancePaid)
+                put("due_fare", b.dueFare)
+                put("status", b.status)
+                put("notes", b.notes)
+              })
+            }
+            put("bookings", bArr)
+          }
+          File(stagingDir, "CarHisab_Bookings_Archive.json").writeText(bJson.toString(2))
+        } catch (be: Exception) {
+          Log.w(TAG, "Error writing bookings archive: ${be.message}")
+        }
+      }
+
+      // Create ZIP
+      val backupDir = getBackupDirectory(context)
+      val zipFile = File(backupDir, getDefaultBackupZipName())
+      ZipOutputStream(BufferedOutputStream(FileOutputStream(zipFile))).use { zos ->
+        // Add DB
+        if (stagedDbFile.exists() && stagedDbFile.length() > 0) {
+          zos.putNextEntry(ZipEntry(MASTER_DB_NAME))
+          FileInputStream(stagedDbFile).use { it.copyTo(zos) }
+          zos.closeEntry()
+        }
+        // Add all JSON archives from staging
+        stagingDir.listFiles()?.forEach { f ->
+          if (f.name != MASTER_DB_NAME && f.exists() && f.length() > 0) {
+            zos.putNextEntry(ZipEntry(f.name))
+            FileInputStream(f).use { it.copyTo(zos) }
+            zos.closeEntry()
+          }
+        }
+      }
+
+      // Cleanup staging dir
+      stagingDir.deleteRecursively()
+
+      // Also copy to Documents/CarHisab if available
+      val docDir = getDocumentsBackupDir(context)
+      if (docDir != null && zipFile.exists()) {
+        try {
+          val docZip = File(docDir, zipFile.name)
+          FileInputStream(zipFile).use { input ->
+            FileOutputStream(docZip).use { output ->
+              input.copyTo(output)
+            }
+          }
         } catch (_: Exception) {}
       }
 
+      if (zipFile.exists() && zipFile.length() > 0) zipFile else null
     } catch (e: Exception) {
-      Log.e(TAG, "Error generating monthly archive files: ${e.message}", e)
-    }
-    resultFiles
-  }
-
-  suspend fun queryDriveAppDataFiles(accessToken: String): List<JSONObject> = withContext(Dispatchers.IO) {
-    if (accessToken.isBlank()) return@withContext emptyList()
-    try {
-      val url = "https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=trashed=false&fields=files(id,name,modifiedTime,size,appProperties,description)"
-      val request = Request.Builder()
-        .url(url)
-        .addHeader("Authorization", "Bearer $accessToken")
-        .get()
-        .build()
-
-      val response = httpClient.newCall(request).execute()
-      val bodyStr = response.body?.string() ?: ""
-      if (response.isSuccessful) {
-        val json = JSONObject(bodyStr)
-        val arr = json.optJSONArray("files") ?: return@withContext emptyList()
-        val list = mutableListOf<JSONObject>()
-        for (i in 0 until arr.length()) {
-          list.add(arr.getJSONObject(i))
-        }
-        list
-      } else {
-        emptyList()
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "Error querying drive appData files: ${e.message}")
-      emptyList()
-    }
-  }
-
-  suspend fun uploadToDriveAppData(
-    stagedFile: File,
-    accessToken: String,
-    existingFileId: String? = null,
-    accountEmail: String = "",
-    targetFileName: String = BACKUP_FILE_NAME,
-    mimeTypeStr: String = "application/octet-stream",
-    properties: Map<String, String> = emptyMap()
-  ): String? = withContext(Dispatchers.IO) {
-    if (accessToken.isBlank()) return@withContext null
-    try {
-      val mediaType = mimeTypeStr.toMediaType()
-      val cleanEmail = accountEmail.trim().lowercase()
-
-      if (!existingFileId.isNullOrBlank()) {
-        val metadataJson = JSONObject().apply {
-          val props = JSONObject()
-          if (cleanEmail.isNotBlank()) props.put("account_email", cleanEmail)
-          properties.forEach { (k, v) -> props.put(k, v) }
-          put("appProperties", props)
-          if (cleanEmail.isNotBlank()) put("description", "account_email:$cleanEmail")
-        }
-
-        val updateMetaUrl = "https://www.googleapis.com/drive/v3/files/$existingFileId"
-        val metaRequest = Request.Builder()
-          .url(updateMetaUrl)
-          .addHeader("Authorization", "Bearer $accessToken")
-          .patch(metadataJson.toString().toRequestBody("application/json; charset=UTF-8".toMediaType()))
-          .build()
-        httpClient.newCall(metaRequest).execute()
-
-        val url = "https://www.googleapis.com/upload/drive/v3/files/$existingFileId?uploadType=media"
-        val request = Request.Builder()
-          .url(url)
-          .addHeader("Authorization", "Bearer $accessToken")
-          .patch(stagedFile.asRequestBody(mediaType))
-          .build()
-
-        val response = httpClient.newCall(request).execute()
-        if (response.isSuccessful) return@withContext existingFileId
-      }
-
-      val url = "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart"
-      val metadataJson = JSONObject().apply {
-        put("name", targetFileName)
-        put("parents", listOf("appDataFolder"))
-        val props = JSONObject()
-        if (cleanEmail.isNotBlank()) props.put("account_email", cleanEmail)
-        properties.forEach { (k, v) -> props.put(k, v) }
-        put("appProperties", props)
-        if (cleanEmail.isNotBlank()) put("description", "account_email:$cleanEmail")
-      }
-
-      val requestBody = MultipartBody.Builder()
-        .setType(MultipartBody.FORM)
-        .addPart(metadataJson.toString().toRequestBody("application/json; charset=UTF-8".toMediaType()))
-        .addPart(stagedFile.asRequestBody(mediaType))
-        .build()
-
-      val request = Request.Builder()
-        .url(url)
-        .addHeader("Authorization", "Bearer $accessToken")
-        .post(requestBody)
-        .build()
-
-      val response = httpClient.newCall(request).execute()
-      val respBody = response.body?.string() ?: ""
-      if (response.isSuccessful) {
-        val json = JSONObject(respBody)
-        return@withContext if (json.has("id")) json.getString("id") else null
-      }
-      null
-    } catch (e: Exception) {
-      Log.e(TAG, "Drive upload error for $targetFileName: ${e.message}")
+      Log.e(TAG, "Error preparing backup zip: ${e.message}", e)
       null
     }
   }
 
-  suspend fun downloadFromDriveAppData(
-    fileId: String,
-    accessToken: String,
-    targetFile: File
-  ): Boolean = withContext(Dispatchers.IO) {
-    if (accessToken.isBlank()) return@withContext false
+  /**
+   * Writes the complete backup zip file directly to a destination Uri (Google Drive or phone folder via SAF).
+   */
+  suspend fun writeBackupToUri(context: Context, destinationUri: Uri): Boolean = withContext(Dispatchers.IO) {
     try {
-      val url = "https://www.googleapis.com/drive/v3/files/$fileId?alt=media"
-      val request = Request.Builder()
-        .url(url)
-        .addHeader("Authorization", "Bearer $accessToken")
-        .get()
-        .build()
-
-      val response = httpClient.newCall(request).execute()
-      if (response.isSuccessful) {
-        val inputStream = response.body?.byteStream() ?: return@withContext false
-        targetFile.outputStream().use { output ->
-          inputStream.copyTo(output)
+      val zipFile = prepareBackupZip(context) ?: return@withContext false
+      val outputStream = context.contentResolver.openOutputStream(destinationUri) ?: return@withContext false
+      outputStream.use { out ->
+        FileInputStream(zipFile).use { inp ->
+          inp.copyTo(out)
         }
-        return@withContext targetFile.exists() && targetFile.length() > 0
       }
-      false
+
+      val userPrefs = UserPreferencesRepository(context)
+      userPrefs.setLastDriveBackupTime(System.currentTimeMillis())
+      true
     } catch (e: Exception) {
-      Log.e(TAG, "Drive download error for $fileId: ${e.message}")
+      Log.e(TAG, "Failed writing backup to Uri: ${e.message}", e)
       false
+    }
+  }
+
+  /**
+   * Restores trips & bookings directly from a selected Uri (Google Drive or local storage).
+   * Supports ZIP packages, raw SQLite .db files, and .json trip archives.
+   */
+  suspend fun restoreFromUri(
+    context: Context,
+    sourceUri: Uri,
+    isBangla: Boolean = true
+  ): RestoreResult = withContext(Dispatchers.IO) {
+    try {
+      val inputStream = context.contentResolver.openInputStream(sourceUri)
+        ?: return@withContext RestoreResult.Error(
+          if (isBangla) "ফাইলটি খোলা যায়নি। দয়া করে আবার নির্বাচন করুন।"
+          else "Could not open selected file."
+        )
+
+      val tempDir = File(context.cacheDir, "restore_temp_${System.currentTimeMillis()}").apply { mkdirs() }
+      val downloadedFile = File(tempDir, "source_backup")
+
+      inputStream.use { input ->
+        FileOutputStream(downloadedFile).use { output ->
+          input.copyTo(output)
+        }
+      }
+
+      if (!downloadedFile.exists() || downloadedFile.length() <= 0L) {
+        tempDir.deleteRecursively()
+        return@withContext RestoreResult.Error(
+          if (isBangla) "নির্বাচিত ফাইলটি খালি।" else "Selected file is empty."
+        )
+      }
+
+      val result = processBackupFileAndRestore(
+        context = context,
+        backupFile = downloadedFile,
+        workDir = tempDir,
+        currentAccountEmail = "",
+        isBangla = isBangla
+      )
+      tempDir.deleteRecursively()
+      result
+    } catch (e: Exception) {
+      Log.e(TAG, "Exception during restoreFromUri: ${e.message}", e)
+      RestoreResult.Error(
+        if (isBangla) "রিস্টোর ব্যর্থ: ${e.localizedMessage ?: e.message}"
+        else "Restore failed: ${e.localizedMessage ?: e.message}"
+      )
+    }
+  }
+
+  /**
+   * Automatic Device Backup: creates the ZIP package and stores in internal and Documents folders.
+   */
+  suspend fun performDeviceAutoBackup(
+    context: Context,
+    overrideAccountEmail: String = "",
+    isBangla: Boolean = true
+  ): BackupResult = withContext(Dispatchers.IO) {
+    try {
+      val zipFile = prepareBackupZip(context, overrideAccountEmail)
+      if (zipFile == null) {
+        val msg = if (isBangla) "ডাটাবেজ ফাঁকা - ব্যাকআপ নেওয়ার মতো তথ্য নেই।" else "Database is empty."
+        return@withContext BackupResult.Empty(msg)
+      }
+
+      val userPrefs = UserPreferencesRepository(context)
+      val now = System.currentTimeMillis()
+      userPrefs.setLastDriveBackupTime(now)
+
+      val db = AppDatabase.getDatabase(context)
+      val count = db.tripDao().getAllTripsSnapshot().size
+
+      val meta = BackupMetadata(
+        exists = true,
+        dateString = formatDateString(now, isBangla),
+        sizeString = formatFileSize(zipFile.length(), isBangla),
+        timestamp = now,
+        sizeBytes = zipFile.length(),
+        fileId = zipFile.name,
+        monthlyFilesCount = count
+      )
+      BackupResult.Success(meta)
+    } catch (e: Exception) {
+      Log.e(TAG, "Device auto backup failed: ${e.message}", e)
+      BackupResult.Error(e.localizedMessage ?: "Auto backup failed")
+    }
+  }
+
+  /**
+   * Automatically restores from any previously saved backup file on device.
+   */
+  suspend fun restoreFromDeviceAutoBackup(
+    context: Context,
+    currentAccountEmail: String = "",
+    isBangla: Boolean = true
+  ): RestoreResult = withContext(Dispatchers.IO) {
+    try {
+      val candidates = mutableListOf<File>()
+      val backupDir = getBackupDirectory(context)
+      backupDir.listFiles()?.filter { it.length() > 0 }?.let { candidates.addAll(it) }
+
+      val docDir = getDocumentsBackupDir(context)
+      docDir?.listFiles()?.filter { it.length() > 0 }?.let { candidates.addAll(it) }
+
+      val sorted = candidates.sortedByDescending { it.lastModified() }
+      val targetFile = sorted.firstOrNull { it.name.endsWith(".zip") }
+        ?: sorted.firstOrNull { it.name.endsWith(".db") }
+        ?: sorted.firstOrNull { it.name.endsWith(".json") }
+
+      if (targetFile == null) {
+        return@withContext RestoreResult.Error(
+          if (isBangla) "ডিভাইসে কোনো ব্যাকআপ ফাইল পাওয়া যায়নি। 'গুগল ড্রাইভ / ফাইল বাছুন' অপশন দিয়ে ফাইল নির্বাচন করুন।"
+          else "No auto-backup file found on device. Please select from Google Drive."
+        )
+      }
+
+      val tempDir = File(context.cacheDir, "auto_restore_${System.currentTimeMillis()}").apply { mkdirs() }
+      val copied = File(tempDir, targetFile.name)
+      FileInputStream(targetFile).use { inp ->
+        FileOutputStream(copied).use { out ->
+          inp.copyTo(out)
+        }
+      }
+
+      val result = processBackupFileAndRestore(context, copied, tempDir, currentAccountEmail, isBangla)
+      tempDir.deleteRecursively()
+      result
+    } catch (e: Exception) {
+      Log.e(TAG, "Auto restore error: ${e.message}", e)
+      RestoreResult.Error(
+        if (isBangla) "রিস্টোর ব্যর্থ: ${e.message}" else "Restore failed: ${e.message}"
+      )
+    }
+  }
+
+  /**
+   * Inspects a backup file (zip, db, or json) and restores its records.
+   */
+  private suspend fun processBackupFileAndRestore(
+    context: Context,
+    backupFile: File,
+    workDir: File,
+    currentAccountEmail: String = "",
+    isBangla: Boolean
+  ): RestoreResult = withContext(Dispatchers.IO) {
+    var dbCandidate: File? = null
+    val jsonCandidates = mutableListOf<File>()
+
+    // Check if ZIP
+    val isZip = isZipFile(backupFile)
+    if (isZip) {
+      Log.d(TAG, "Unzipping backup archive: ${backupFile.name}")
+      unzipArchive(backupFile, workDir)
+      workDir.listFiles()?.forEach { file ->
+        if (file.name.endsWith(".db") || file.name == MASTER_DB_NAME) {
+          dbCandidate = file
+        } else if (file.name.endsWith(".json") && file.name != MANIFEST_FILE_NAME) {
+          jsonCandidates.add(file)
+        }
+      }
+    } else if (isSqliteDb(backupFile)) {
+      dbCandidate = backupFile
+    } else if (backupFile.name.endsWith(".json") || isJsonFile(backupFile)) {
+      jsonCandidates.add(backupFile)
+    }
+
+    if (currentAccountEmail.isNotBlank()) {
+      val manifestFile = File(workDir, MANIFEST_FILE_NAME)
+      if (manifestFile.exists()) {
+        try {
+          val mfJson = JSONObject(manifestFile.readText())
+          val backedUpEmail = mfJson.optString("account_email", "")
+          if (backedUpEmail.isNotBlank() && !backedUpEmail.equals(currentAccountEmail, ignoreCase = true)) {
+            return@withContext RestoreResult.Error(
+              if (isBangla) "ভিন্ন অ্যাকাউন্টের ব্যাকআপ ফাইল রিস্টোর করা সম্ভব নয়।"
+              else "Cannot restore backup from a different account."
+            )
+          }
+        } catch (_: Exception) {}
+      }
+    }
+
+    var restoredTrips = 0
+    var restoredBookings = 0
+
+    // Priority 1: Restore SQLite database file
+    if (dbCandidate != null && dbCandidate!!.length() > 0) {
+      try {
+        AppDatabase.closeDatabase()
+        val targetDb = context.getDatabasePath(DB_NAME)
+        targetDb.parentFile?.mkdirs()
+
+        File(targetDb.path + "-shm").delete()
+        File(targetDb.path + "-wal").delete()
+
+        FileInputStream(dbCandidate!!).use { input ->
+          FileOutputStream(targetDb).use { output ->
+            input.copyTo(output)
+          }
+        }
+
+        val restoredDb = AppDatabase.getDatabase(context)
+        val allTrips = restoredDb.tripDao().getAllTripsSnapshot()
+        if (allTrips.isNotEmpty()) {
+          val auditedTrips = allTrips.map { ensureValidTripDate(it) }
+          restoredDb.tripDao().insertTrips(auditedTrips)
+
+          restoredTrips = auditedTrips.size
+          restoredBookings = restoredDb.bookingDao().getAllBookingsSnapshot().size
+          Log.d(TAG, "Restored directly from DB file: trips=$restoredTrips, bookings=$restoredBookings")
+        }
+      } catch (e: Exception) {
+        Log.w(TAG, "Failed SQLite DB restore attempt: ${e.message}")
+      }
+    }
+
+    // Priority 2: Restore from month-wise JSON files if DB restore didn't yield trips
+    if (restoredTrips == 0 && jsonCandidates.isNotEmpty()) {
+      val tripsToInsert = mutableListOf<TripEntity>()
+      val bookingsToInsert = mutableListOf<BookingEntity>()
+      for (jf in jsonCandidates) {
+        try {
+          val content = jf.readText()
+          val root = JSONObject(content)
+          val tripsArr = root.optJSONArray("trips")
+          if (tripsArr != null) {
+            for (i in 0 until tripsArr.length()) {
+              val obj = tripsArr.getJSONObject(i)
+              val tripId = obj.optLong("id", 0L)
+              val trip = TripEntity(
+                id = if (tripId > 0L) tripId else 0L,
+                userId = obj.optString("user_id", ""),
+                vehicleId = obj.optString("vehicle_id", ""),
+                dateMillis = obj.optLong("date_millis", 0L),
+                dateString = obj.optString("date_string", ""),
+                place = obj.optString("place", ""),
+                rent = obj.optDouble("rent", 0.0),
+                gratuity = obj.optDouble("gratuity", 0.0),
+                maintenanceCost = obj.optDouble("maintenance_cost", 0.0),
+                kmDriven = obj.optDouble("km_driven", 0.0),
+                description = obj.optString("description", ""),
+                passengerName = obj.optString("passenger_name", ""),
+                passengerPhone = obj.optString("passenger_phone", ""),
+                income = obj.optDouble("income", 0.0),
+                profit = obj.optDouble("profit", 0.0)
+              )
+              tripsToInsert.add(ensureValidTripDate(trip))
+            }
+          }
+
+          val bookingsArr = root.optJSONArray("bookings")
+          if (bookingsArr != null) {
+            for (i in 0 until bookingsArr.length()) {
+              val bObj = bookingsArr.getJSONObject(i)
+              val bId = bObj.optLong("id", 0L)
+              val booking = BookingEntity(
+                id = if (bId > 0L) bId else 0L,
+                passengerName = bObj.optString("passenger_name", ""),
+                passengerPhone = bObj.optString("passenger_phone", ""),
+                pickupLocation = bObj.optString("pickup_location", ""),
+                dropLocation = bObj.optString("drop_location", ""),
+                tripDateMillis = bObj.optLong("trip_date_millis", 0L),
+                tripDateString = bObj.optString("trip_date_string", ""),
+                tripTimeString = bObj.optString("trip_time_string", ""),
+                totalFare = bObj.optDouble("total_fare", 0.0),
+                advancePaid = bObj.optDouble("advance_paid", 0.0),
+                dueFare = bObj.optDouble("due_fare", 0.0),
+                status = bObj.optString("status", "CONFIRMED"),
+                notes = bObj.optString("notes", "")
+              )
+              bookingsToInsert.add(booking)
+            }
+          }
+        } catch (je: Exception) {
+          Log.w(TAG, "Error reading json ${jf.name}: ${je.message}")
+        }
+      }
+
+      if (tripsToInsert.isNotEmpty()) {
+        val db = AppDatabase.getDatabase(context)
+        db.tripDao().deleteAllTrips()
+        db.tripDao().insertTrips(tripsToInsert)
+        restoredTrips = db.tripDao().getAllTripsSnapshot().size
+        Log.d(TAG, "Restored trips from JSON archive: count=$restoredTrips")
+      }
+
+      if (bookingsToInsert.isNotEmpty()) {
+        val db = AppDatabase.getDatabase(context)
+        db.bookingDao().deleteAllBookings()
+        db.bookingDao().insertBookings(bookingsToInsert)
+        restoredBookings = db.bookingDao().getAllBookingsSnapshot().size
+        Log.d(TAG, "Restored bookings from JSON archive: count=$restoredBookings")
+      }
+    }
+
+    if (restoredTrips == 0 && restoredBookings == 0) {
+      val err = if (isBangla) "ফাইলটিতে রিস্টোর করার মতো কোনো ট্রিপ বা বুকিং তথ্য পাওয়া যায়নি।"
+      else "No valid trip or booking records found in the backup file."
+      return@withContext RestoreResult.Error(err)
+    }
+
+    // Build distinct month breakdown
+    val finalDb = AppDatabase.getDatabase(context)
+    val finalTrips = finalDb.tripDao().getAllTripsSnapshot()
+    val breakdown = mutableMapOf<String, Int>()
+    for (t in finalTrips) {
+      val label = getMonthDisplay(t.dateMillis, isBangla)
+      breakdown[label] = (breakdown[label] ?: 0) + 1
+    }
+
+    val userPrefs = UserPreferencesRepository(context)
+    userPrefs.setLastDriveBackupTime(System.currentTimeMillis())
+    userPrefs.setLastBackupTripCount(finalTrips.size)
+
+    RestoreResult.Success(
+      tripsCount = finalTrips.size,
+      bookingsCount = restoredBookings,
+      monthlyBreakdown = breakdown
+    )
+  }
+
+  private fun isZipFile(file: File): Boolean {
+    return try {
+      FileInputStream(file).use { fis ->
+        val header = ByteArray(4)
+        val read = fis.read(header)
+        read == 4 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte() &&
+            header[2] == 0x03.toByte() && header[3] == 0x04.toByte()
+      }
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  private fun isSqliteDb(file: File): Boolean {
+    return try {
+      FileInputStream(file).use { fis ->
+        val header = ByteArray(16)
+        val read = fis.read(header)
+        if (read >= 16) {
+          String(header, 0, 16).startsWith("SQLite format 3")
+        } else false
+      }
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  private fun isJsonFile(file: File): Boolean {
+    return try {
+      FileInputStream(file).use { fis ->
+        val firstChar = fis.read()
+        firstChar == '{'.code || firstChar == '['.code
+      }
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  private fun unzipArchive(zipFile: File, destinationDir: File) {
+    ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
+      var entry: ZipEntry? = zis.nextEntry
+      while (entry != null) {
+        val targetFile = File(destinationDir, entry.name)
+        if (entry.isDirectory) {
+          targetFile.mkdirs()
+        } else {
+          targetFile.parentFile?.mkdirs()
+          FileOutputStream(targetFile).use { fos ->
+            zis.copyTo(fos)
+          }
+        }
+        zis.closeEntry()
+        entry = zis.nextEntry
+      }
+    }
+  }
+
+  /**
+   * Creates an Android Share Intent for direct 1-tap sharing to Google Drive, WhatsApp, Gmail, etc.
+   */
+  suspend fun createShareBackupIntent(context: Context): Intent? = withContext(Dispatchers.IO) {
+    try {
+      val zipFile = prepareBackupZip(context) ?: return@withContext null
+      val uri = FileProvider.getUriForFile(
+        context,
+        "${context.packageName}.fileprovider",
+        zipFile
+      )
+
+      val shareIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "application/zip"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_SUBJECT, "CarHisab Backup (${zipFile.name})")
+        putExtra(
+          Intent.EXTRA_TEXT,
+          "CarHisab সম্পূর্ণ ট্রিপ ও গাড়ির হিসাব ব্যাকআপ ফাইল। গুগল ড্রাইভে সেভ করুন অথবা নিরাপদে সংরক্ষণ করুন।"
+        )
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+      }
+      Intent.createChooser(shareIntent, "গুগল ড্রাইভ অথবা স্টোরেজে ব্যাকআপ সেভ করুন")
+    } catch (e: Exception) {
+      Log.e(TAG, "Error creating share intent: ${e.message}", e)
+      null
     }
   }
 
@@ -616,406 +917,68 @@ object GoogleDriveBackupManager {
   ): BackupMetadata = withContext(Dispatchers.IO) {
     try {
       val userPrefs = UserPreferencesRepository(context)
-      val cleanUserEmail = currentAccountEmail.ifBlank {
-        userPrefs.getLastDriveBackupEmail().ifBlank { userPrefs.profileFlow.value.driverEmail }
-      }.trim().lowercase()
+      val backupDir = getBackupDirectory(context)
+      val docDir = getDocumentsBackupDir(context)
 
-      val activeToken = accessToken ?: getGoogleDriveAccessToken(context, cleanUserEmail)
-      if (!activeToken.isNullOrBlank()) {
-        val driveFiles = queryDriveAppDataFiles(activeToken)
-        val masterFile = driveFiles.firstOrNull { it.optString("name") == BACKUP_FILE_NAME || it.optString("name") == MASTER_DB_NAME }
-        if (masterFile != null) {
-          val id = masterFile.getString("id")
-          val size = masterFile.optLong("size", 0L)
-          val modifiedStr = masterFile.optString("modifiedTime", "")
-          var ts = System.currentTimeMillis()
-          try {
-            val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
-              timeZone = java.util.TimeZone.getTimeZone("UTC")
-            }
-            ts = sdf.parse(modifiedStr)?.time ?: System.currentTimeMillis()
-          } catch (_: Exception) {}
+      val files = mutableListOf<File>()
+      backupDir.listFiles()?.filter { it.length() > 0 }?.let { files.addAll(it) }
+      docDir?.listFiles()?.filter { it.length() > 0 }?.let { files.addAll(it) }
 
-          val monthlyFiles = driveFiles.filter { it.optString("name").startsWith("CarHisab_") && it.optString("name").endsWith(".json") }
-          return@withContext BackupMetadata(
-            exists = true,
-            dateString = formatDateString(ts, isBangla),
-            sizeString = formatFileSize(size, isBangla),
-            timestamp = ts,
-            sizeBytes = size,
-            fileId = id,
-            accountEmail = cleanUserEmail,
-            accountMismatch = false,
-            monthlyFilesCount = monthlyFiles.size
-          )
-        }
-      }
-
-      val internalFile = getInternalBackupFile(context)
-      val externalFile = getExternalBackupFile(context)
-      val docFile = getDocumentsBackupFile(context)
-      val candidateFile = when {
-        internalFile.exists() && internalFile.length() > 0 -> internalFile
-        externalFile != null && externalFile.exists() && externalFile.length() > 0 -> externalFile
-        docFile != null && docFile.exists() && docFile.length() > 0 -> docFile
-        else -> null
-      }
-      if (candidateFile != null) {
-        val lastModified = candidateFile.lastModified()
-        val sizeBytes = candidateFile.length()
+      val latest = files.maxByOrNull { it.lastModified() }
+      if (latest != null) {
+        val ts = latest.lastModified()
+        val size = latest.length()
         return@withContext BackupMetadata(
           exists = true,
-          dateString = formatDateString(lastModified, isBangla),
-          sizeString = formatFileSize(sizeBytes, isBangla),
-          timestamp = lastModified,
-          sizeBytes = sizeBytes,
-          fileId = "local_database_backup",
-          accountEmail = cleanUserEmail,
-          accountMismatch = false
+          dateString = formatDateString(ts, isBangla),
+          sizeString = formatFileSize(size, isBangla),
+          timestamp = ts,
+          sizeBytes = size,
+          fileId = latest.name
         )
       }
 
       val lastTime = userPrefs.getLastDriveBackupTime()
       if (lastTime > 0L) {
         val dbFile = context.getDatabasePath(DB_NAME)
-        val sizeBytes = if (dbFile.exists()) dbFile.length() else 102400L
+        val size = if (dbFile.exists()) dbFile.length() else 102400L
         return@withContext BackupMetadata(
           exists = true,
           dateString = formatDateString(lastTime, isBangla),
-          sizeString = formatFileSize(sizeBytes, isBangla),
+          sizeString = formatFileSize(size, isBangla),
           timestamp = lastTime,
-          sizeBytes = sizeBytes,
-          fileId = "local_preference_backup",
-          accountEmail = cleanUserEmail,
-          accountMismatch = false
+          sizeBytes = size,
+          fileId = "device_backup"
         )
       }
 
       BackupMetadata(exists = false)
     } catch (e: Exception) {
-      Log.e(TAG, "Error checking backup: ${e.message}", e)
       BackupMetadata(exists = false)
     }
   }
 
   /**
-   * Performs organized backup:
-   * 1. Creates identifiable master database file: CarHisab_Master.db
-   * 2. Creates dedicated, identifiable files for each month: CarHisab_[Year]_[Month]_[MonthName]_Trips.json
-   * 3. Creates manifest file: CarHisab_Backup_Manifest.json
-   * 4. Uploads all files to Google Drive appDataFolder if access token is available
-   * 5. Syncs trips to Supabase cloud table as redundant safety
+   * Compatibility alias for performBackup
    */
   suspend fun performBackup(
     context: Context,
     accessToken: String? = null,
     currentAccountEmail: String = "",
     isBangla: Boolean = true
-  ): BackupResult = withContext(Dispatchers.IO) {
-    try {
-      val userPrefs = UserPreferencesRepository(context)
-      val cleanEmail = currentAccountEmail.ifBlank {
-        userPrefs.profileFlow.value.driverEmail
-      }.trim().lowercase()
-
-      val isNotEmpty = verifyDatabaseNotEmpty(context)
-      if (!isNotEmpty) {
-        val msg = if (isBangla) "ডাটাবেজ ফাঁকা - ব্যাকআপ তৈরির মতো পর্যাপ্ত তথ্য নেই।" else "Database is empty. Backup skipped."
-        return@withContext BackupResult.Empty(msg)
-      }
-
-      val stagedFile = getStagedBackupFile(context)
-        ?: return@withContext BackupResult.Error(
-          if (isBangla) "ব্যাকআপ ফাইল তৈরিতে ব্যর্থ।" else "Failed to stage backup file."
-        )
-
-      val db = AppDatabase.getDatabase(context)
-      val rawTrips = db.tripDao().getAllTripsSnapshot()
-      val validTrips = rawTrips.map { ensureValidTripDate(it) }
-      val bookings = db.bookingDao().getAllBookingsSnapshot()
-      val now = System.currentTimeMillis()
-
-      val profile = userPrefs.profileFlow.value
-      val driverName = profile.driverName.ifBlank { "Driver" }
-      val vehicleId = profile.carNumber.ifBlank { profile.carName }.ifBlank { "Car" }
-
-      // 1. Generate identifiable Month-Wise Structured Archive Files
-      val monthlyFiles = generateMonthlyArchiveFiles(
-        context = context,
-        trips = validTrips,
-        accountEmail = cleanEmail,
-        driverName = driverName,
-        vehicleId = vehicleId
-      )
-
-      // 2. Obtain Google Drive token if available and upload files
-      val activeToken = accessToken ?: getGoogleDriveAccessToken(context, cleanEmail)
-      var driveFileId: String? = null
-
-      if (!activeToken.isNullOrBlank()) {
-        try {
-          val existingFiles = queryDriveAppDataFiles(activeToken)
-          val existingMaster = existingFiles.firstOrNull { it.optString("name") == BACKUP_FILE_NAME || it.optString("name") == MASTER_DB_NAME }
-
-          // Upload Master DB file
-          driveFileId = uploadToDriveAppData(
-            stagedFile = stagedFile,
-            accessToken = activeToken,
-            existingFileId = existingMaster?.optString("id"),
-            accountEmail = cleanEmail,
-            targetFileName = BACKUP_FILE_NAME,
-            mimeTypeStr = "application/x-sqlite3"
-          )
-
-          // Upload Manifest
-          val manifestFile = File(getBackupDirectory(context), MANIFEST_FILE_NAME)
-          if (manifestFile.exists()) {
-            val existingManifest = existingFiles.firstOrNull { it.optString("name") == MANIFEST_FILE_NAME }
-            uploadToDriveAppData(
-              stagedFile = manifestFile,
-              accessToken = activeToken,
-              existingFileId = existingManifest?.optString("id"),
-              accountEmail = cleanEmail,
-              targetFileName = MANIFEST_FILE_NAME,
-              mimeTypeStr = "application/json"
-            )
-          }
-
-          // Upload each month file
-          for (mFile in monthlyFiles) {
-            val existingMonth = existingFiles.firstOrNull { it.optString("name") == mFile.name }
-            uploadToDriveAppData(
-              stagedFile = mFile,
-              accessToken = activeToken,
-              existingFileId = existingMonth?.optString("id"),
-              accountEmail = cleanEmail,
-              targetFileName = mFile.name,
-              mimeTypeStr = "application/json",
-              properties = mapOf("month_archive" to "true")
-            )
-          }
-          Log.d(TAG, "Uploaded master DB and ${monthlyFiles.size} monthly archives to Google Drive.")
-        } catch (de: Exception) {
-          Log.w(TAG, "Drive upload failed, local files intact: ${de.message}")
-        }
-      }
-
-      // 3. Redundant sync to Supabase
-      if (cleanEmail.isNotBlank()) {
-        try {
-          for (t in validTrips) {
-            com.example.data.auth.SupabaseAuthManager.insertTripToSupabase(t)
-          }
-        } catch (_: Exception) {}
-      }
-
-      userPrefs.setLastDriveBackupTime(now)
-      userPrefs.setLastBackupTripCount(validTrips.size)
-      if (cleanEmail.isNotBlank()) userPrefs.setLastDriveBackupEmail(cleanEmail)
-
-      val monthCount = monthlyFiles.size
-      val summaryText = if (isBangla) {
-        "মোট $monthCount টি মাসের তথ্য আলাদা ফাইলে সংরক্ষিত হয়েছে।"
-      } else {
-        "$monthCount monthly archives generated distinctly."
-      }
-
-      val metadata = BackupMetadata(
-        exists = true,
-        dateString = formatDateString(now, isBangla),
-        sizeString = formatFileSize(stagedFile.length(), isBangla),
-        timestamp = now,
-        sizeBytes = stagedFile.length(),
-        fileId = driveFileId ?: "local_${BACKUP_FILE_NAME}",
-        accountEmail = cleanEmail,
-        accountMismatch = false,
-        monthlyFilesCount = monthCount,
-        monthlySummaryText = summaryText
-      )
-
-      Log.d(TAG, "Backup SUCCESS: trips=${validTrips.size}, monthlyFiles=$monthCount, driveId=$driveFileId")
-      BackupResult.Success(metadata)
-    } catch (e: Exception) {
-      Log.e(TAG, "Error performing backup: ${e.message}", e)
-      BackupResult.Error(e.localizedMessage ?: "Backup failed")
-    }
+  ): BackupResult {
+    return performDeviceAutoBackup(context, currentAccountEmail, isBangla)
   }
 
   /**
-   * Restores trips guaranteeing that:
-   * 1. One month's trips NEVER mix with or override another month.
-   * 2. Every trip is strictly preserved with its original date, time, and financial record.
-   * 3. Calculates and returns the exact month-by-month breakdown of restored trips.
+   * Compatibility alias for restoreBackup
    */
   suspend fun restoreBackup(
     context: Context,
     accessToken: String? = null,
     currentAccountEmail: String = "",
     isBangla: Boolean = true
-  ): RestoreResult = withContext(Dispatchers.IO) {
-    try {
-      val userPrefs = UserPreferencesRepository(context)
-      val cleanCurrentEmail = currentAccountEmail.ifBlank {
-        userPrefs.profileFlow.value.driverEmail
-      }.trim().lowercase()
-
-      val internalFile = getInternalBackupFile(context)
-      val externalFile = getExternalBackupFile(context)
-      val docFile = getDocumentsBackupFile(context)
-
-      val activeToken = accessToken ?: getGoogleDriveAccessToken(context, cleanCurrentEmail)
-
-      // 1. Download from Google Drive if token available
-      if (!activeToken.isNullOrBlank()) {
-        val driveFiles = queryDriveAppDataFiles(activeToken)
-        val driveMaster = driveFiles.firstOrNull { it.optString("name") == BACKUP_FILE_NAME || it.optString("name") == MASTER_DB_NAME }
-        if (driveMaster != null) {
-          val fid = driveMaster.getString("id")
-          downloadFromDriveAppData(fid, activeToken, internalFile)
-        }
-
-        // Also download any monthly JSON archives
-        val driveMonthFiles = driveFiles.filter { it.optString("name").startsWith("CarHisab_") && it.optString("name").endsWith(".json") }
-        for (mf in driveMonthFiles) {
-          val mName = mf.getString("name")
-          val localMFile = File(getBackupDirectory(context), mName)
-          downloadFromDriveAppData(mf.getString("id"), activeToken, localMFile)
-        }
-      }
-
-      val sourceDbFile = when {
-        internalFile.exists() && internalFile.length() > 0 -> internalFile
-        externalFile != null && externalFile.exists() && externalFile.length() > 0 -> externalFile
-        docFile != null && docFile.exists() && docFile.length() > 0 -> docFile
-        else -> null
-      }
-
-      var restoredTripsCount = 0
-      var restoredBookingsCount = 0
-
-      // Case A: Restore from SQLite database file
-      if (sourceDbFile != null && sourceDbFile.length() > 0) {
-        AppDatabase.closeDatabase()
-        val targetDbFile = context.getDatabasePath(DB_NAME)
-        targetDbFile.parentFile?.mkdirs()
-
-        File(targetDbFile.path + "-shm").delete()
-        File(targetDbFile.path + "-wal").delete()
-
-        FileInputStream(sourceDbFile).use { input ->
-          FileOutputStream(targetDbFile).use { output ->
-            input.copyTo(output)
-          }
-        }
-
-        val restoredDb = AppDatabase.getDatabase(context)
-        val allTrips = restoredDb.tripDao().getAllTripsSnapshot()
-        val auditedTrips = allTrips.map { ensureValidTripDate(it) }
-        restoredDb.tripDao().insertTrips(auditedTrips)
-
-        restoredTripsCount = auditedTrips.size
-        restoredBookingsCount = restoredDb.bookingDao().getAllBookingsSnapshot().size
-      }
-
-      // Case B: If DB file had 0 trips or was missing, restore from Monthly JSON files
-      if (restoredTripsCount == 0) {
-        val backupDir = getBackupDirectory(context)
-        val docDir = getDocumentsBackupDir(context)
-
-        val jsonFiles = mutableListOf<File>()
-        backupDir.listFiles()?.filter { it.name.startsWith("CarHisab_") && it.name.endsWith(".json") && it.name != MANIFEST_FILE_NAME }?.let {
-          jsonFiles.addAll(it)
-        }
-        if (jsonFiles.isEmpty() && docDir != null) {
-          docDir.listFiles()?.filter { it.name.startsWith("CarHisab_") && it.name.endsWith(".json") && it.name != MANIFEST_FILE_NAME }?.let {
-            jsonFiles.addAll(it)
-          }
-        }
-
-        if (jsonFiles.isNotEmpty()) {
-          val tripsToInsert = mutableListOf<TripEntity>()
-          for (jf in jsonFiles) {
-            try {
-              val content = jf.readText()
-              val root = JSONObject(content)
-              val tripsArr = root.optJSONArray("trips") ?: continue
-              for (i in 0 until tripsArr.length()) {
-                val obj = tripsArr.getJSONObject(i)
-                val trip = TripEntity(
-                  id = 0L, // Auto-generate clean primary key to avoid collision
-                  userId = obj.optString("user_id", cleanCurrentEmail),
-                  vehicleId = obj.optString("vehicle_id", ""),
-                  dateMillis = obj.optLong("date_millis", 0L),
-                  dateString = obj.optString("date_string", ""),
-                  place = obj.optString("place", ""),
-                  rent = obj.optDouble("rent", 0.0),
-                  gratuity = obj.optDouble("gratuity", 0.0),
-                  maintenanceCost = obj.optDouble("maintenance_cost", 0.0),
-                  kmDriven = obj.optDouble("km_driven", 0.0),
-                  description = obj.optString("description", ""),
-                  passengerName = obj.optString("passenger_name", ""),
-                  passengerPhone = obj.optString("passenger_phone", ""),
-                  income = obj.optDouble("income", 0.0),
-                  profit = obj.optDouble("profit", 0.0)
-                )
-                tripsToInsert.add(ensureValidTripDate(trip))
-              }
-            } catch (je: Exception) {
-              Log.w(TAG, "Error parsing month json ${jf.name}: ${je.message}")
-            }
-          }
-
-          if (tripsToInsert.isNotEmpty()) {
-            val db = AppDatabase.getDatabase(context)
-            db.tripDao().insertTrips(tripsToInsert)
-            restoredTripsCount = db.tripDao().getAllTripsSnapshot().size
-          }
-        }
-      }
-
-      // Case C: Check Supabase cloud fallback
-      if (restoredTripsCount == 0 && cleanCurrentEmail.isNotBlank()) {
-        try {
-          val cloudTrips = com.example.data.auth.SupabaseAuthManager.fetchTripsFromSupabase(cleanCurrentEmail)
-          if (cloudTrips.isNotEmpty()) {
-            val db = AppDatabase.getDatabase(context)
-            val validated = cloudTrips.map { ensureValidTripDate(it) }
-            db.tripDao().insertTrips(validated)
-            restoredTripsCount = validated.size
-          }
-        } catch (_: Exception) {}
-      }
-
-      if (restoredTripsCount == 0 && restoredBookingsCount == 0) {
-        val err = if (isBangla) "রিস্টোর করার মতো কোনো ব্যাকআপ ফাইল বা তথ্য পাওয়া যায়নি।"
-        else "No backup files or trips found to restore."
-        return@withContext RestoreResult.Error(err)
-      }
-
-      // Calculate distinct month-by-month breakdown
-      val finalDb = AppDatabase.getDatabase(context)
-      val finalTrips = finalDb.tripDao().getAllTripsSnapshot()
-      val breakdownMap = mutableMapOf<String, Int>()
-
-      for (t in finalTrips) {
-        val label = getMonthDisplay(t.dateMillis, isBangla)
-        breakdownMap[label] = (breakdownMap[label] ?: 0) + 1
-      }
-
-      userPrefs.setLastDriveBackupTime(System.currentTimeMillis())
-      userPrefs.setLastBackupTripCount(finalTrips.size)
-
-      Log.d(TAG, "Restore SUCCESS: totalTrips=${finalTrips.size}, months=${breakdownMap.size}")
-      RestoreResult.Success(
-        tripsCount = finalTrips.size,
-        bookingsCount = restoredBookingsCount,
-        monthlyBreakdown = breakdownMap
-      )
-    } catch (e: Exception) {
-      Log.e(TAG, "Restore error: ${e.message}", e)
-      RestoreResult.Error(
-        if (isBangla) "রিস্টোর ব্যর্থ হয়েছে: ${e.message}" else "Restore failed: ${e.message}"
-      )
-    }
+  ): RestoreResult {
+    return restoreFromDeviceAutoBackup(context, currentAccountEmail, isBangla)
   }
 }

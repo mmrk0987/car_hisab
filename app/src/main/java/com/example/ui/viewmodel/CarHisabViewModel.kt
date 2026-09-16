@@ -2,6 +2,7 @@ package com.example.ui.viewmodel
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -1192,36 +1193,137 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     _backupStatusMessage.value = null
   }
 
-  fun triggerAutoBackup(email: String = userProfile.value.driverEmail) {
+  fun triggerAutoBackup(
+    email: String = userProfile.value.driverEmail,
+    onSuccess: (String) -> Unit = {},
+    onError: (String) -> Unit = {}
+  ) {
     viewModelScope.launch {
       _isBackingUp.value = true
       val context = getApplication<Application>().applicationContext
       val isBangla = language.value == AppLanguage.BANGLA
-      val activeEmail = email.ifBlank { userProfile.value.driverEmail }.ifBlank { userProfile.value.savedEmail }
-      val result = GoogleDriveBackupManager.performBackup(
+      val result = GoogleDriveBackupManager.performDeviceAutoBackup(
         context = context,
-        currentAccountEmail = activeEmail,
         isBangla = isBangla
       )
       _isBackingUp.value = false
       when (result) {
         is BackupResult.Success -> {
           _lastBackupTime.value = result.metadata.timestamp
-          val monthDetail = if (result.metadata.monthlyFilesCount > 0) {
-            if (isBangla) " (${result.metadata.monthlyFilesCount} টি মাসের আলাদা ফাইলসহ)"
-            else " (${result.metadata.monthlyFilesCount} distinct monthly files)"
-          } else ""
-          val msg = if (isBangla) "গুগল ড্রাইভ ও ক্লাউড ব্যাকআপ সম্পন্ন (${result.metadata.dateString})$monthDetail"
-          else "Google Drive & Cloud backup complete (${result.metadata.dateString})$monthDetail"
+          val msg = if (isBangla)
+            "অটো-ব্যাকআপ সফল হয়েছে! (${result.metadata.dateString})\nফাইল সাইজ: ${result.metadata.sizeString}"
+          else
+            "Auto-backup successful! (${result.metadata.dateString})\nSize: ${result.metadata.sizeString}"
           _backupStatusMessage.value = msg
+          onSuccess(msg)
         }
         is BackupResult.Empty -> {
-          Log.d("CarHisabViewModel", "Auto-backup skipped: DB is empty")
+          _backupStatusMessage.value = result.message
+          onError(result.message)
         }
         is BackupResult.Error -> {
           _backupStatusMessage.value = result.message
-          Log.e("CarHisabViewModel", "Auto-backup failed: ${result.message}")
+          onError(result.message)
         }
+      }
+    }
+  }
+
+  fun saveBackupToUri(
+    uri: Uri,
+    onSuccess: (String) -> Unit = {},
+    onError: (String) -> Unit = {}
+  ) {
+    viewModelScope.launch {
+      _isBackingUp.value = true
+      val context = getApplication<Application>().applicationContext
+      val isBangla = language.value == AppLanguage.BANGLA
+      val success = GoogleDriveBackupManager.writeBackupToUri(context, uri)
+      _isBackingUp.value = false
+      if (success) {
+        val now = System.currentTimeMillis()
+        _lastBackupTime.value = now
+        val dateStr = GoogleDriveBackupManager.formatDateString(now, isBangla)
+        val msg = if (isBangla)
+          "আপনার নির্বাচিত গুগল ড্রাইভ / ফোল্ডারে ব্যাকআপ ফাইল সফলভাবে সংরক্ষিত হয়েছে!\nতারিখ: $dateStr\n(মাসের কোনো হিসাব মেশেনি - প্রতিটি মাস আলাদা ফাইলে সাজানো আছে)"
+        else
+          "Backup file saved successfully to your selected Google Drive / storage!\nDate: $dateStr\n(Month records are separated and intact)"
+        _backupStatusMessage.value = msg
+        onSuccess(msg)
+      } else {
+        val err = if (isBangla) "ফাইলে ব্যাকআপ সংরক্ষণ করা সম্ভব হয়নি।" else "Failed to save backup to file."
+        _backupStatusMessage.value = err
+        onError(err)
+      }
+    }
+  }
+
+  fun restoreFromUri(
+    uri: Uri,
+    onSuccess: (String) -> Unit = {},
+    onError: (String) -> Unit = {}
+  ) {
+    viewModelScope.launch {
+      _isRestoring.value = true
+      val context = getApplication<Application>().applicationContext
+      val isBangla = language.value == AppLanguage.BANGLA
+      val result = GoogleDriveBackupManager.restoreFromUri(context, uri, isBangla)
+      _isRestoring.value = false
+      when (result) {
+        is RestoreResult.Success -> {
+          _pendingRestoreMetadata.value = null
+          notifyDatabaseUpdated()
+          _lastBackupTime.value = System.currentTimeMillis()
+
+          val breakdownText = if (result.monthlyBreakdown.isNotEmpty()) {
+            val header = if (isBangla) "\n\nমাসভিত্তিক সংরক্ষিত ট্রিপ:\n" else "\n\nMonth-wise Restored Trips:\n"
+            val rows = result.monthlyBreakdown.entries.joinToString("\n") { (mLabel, count) ->
+              if (isBangla) "• $mLabel: $count টি ট্রিপ" else "• $mLabel: $count trips"
+            }
+            val footer = if (isBangla)
+              "\n\nকোনো মাসের তথ্য মেশেনি — প্রতিটি ট্রিপ নির্দিষ্ট তারিখ ও মাসে নিখুঁতভাবে রিস্টোর হয়েছে।"
+            else
+              "\n\nNo month records mixed — all trips restored into their exact original months."
+            header + rows + footer
+          } else ""
+
+          val msg = if (isBangla)
+            "সফলভাবে মোট ${result.tripsCount} টি ট্রিপ ও ${result.bookingsCount} টি বুকিং রিস্টোর করা হয়েছে!$breakdownText"
+          else
+            "Successfully restored ${result.tripsCount} trips and ${result.bookingsCount} bookings!$breakdownText"
+
+          _backupStatusMessage.value = msg
+          onSuccess(msg)
+        }
+        is RestoreResult.Error -> {
+          _backupStatusMessage.value = result.message
+          onError(result.message)
+        }
+      }
+    }
+  }
+
+  fun getShareBackupIntent(
+    context: Context,
+    onReady: (Intent) -> Unit,
+    onError: (String) -> Unit
+  ) {
+    viewModelScope.launch {
+      _isBackingUp.value = true
+      val intent = GoogleDriveBackupManager.createShareBackupIntent(context)
+      _isBackingUp.value = false
+      if (intent != null) {
+        val now = System.currentTimeMillis()
+        _lastBackupTime.value = now
+        val isBangla = language.value == AppLanguage.BANGLA
+        val msg = if (isBangla) "ব্যাকআপ ফাইল তৈরি হয়েছে, গুগল ড্রাইভ অথবা পছন্দের অ্যাপে সেভ করুন।"
+        else "Backup package prepared. Select Google Drive or app to save."
+        _backupStatusMessage.value = msg
+        onReady(intent)
+      } else {
+        val isBangla = language.value == AppLanguage.BANGLA
+        val err = if (isBangla) "ব্যাকআপ ফাইল তৈরিতে ব্যর্থ (তথ্য ফাঁকা থাকতে পারে)।" else "Failed to create backup package."
+        onError(err)
       }
     }
   }

@@ -123,6 +123,9 @@ fun SettingsScreen(
   backupStatusMessage: String? = null,
   onGoogleDriveBackup: () -> Unit = {},
   onGoogleDriveRestore: (Uri?) -> Unit = {},
+  onSaveBackupUri: (Uri) -> Unit = {},
+  onRestoreBackupUri: (Uri) -> Unit = {},
+  onShareBackup: () -> Unit = {},
   onLogout: () -> Unit = {}
 ) {
   val context = LocalContext.current
@@ -132,6 +135,22 @@ fun SettingsScreen(
   var adminTargetIdInput by remember { mutableStateOf("") }
   var adminSelectedDurationDays by remember { mutableStateOf(30) }
   var generatedResultKey by remember { mutableStateOf("") }
+
+  val createBackupDocumentLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.CreateDocument("application/zip")
+  ) { uri: Uri? ->
+    if (uri != null) {
+      onSaveBackupUri(uri)
+    }
+  }
+
+  val openRestoreDocumentLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.OpenDocument()
+  ) { uri: Uri? ->
+    if (uri != null) {
+      onRestoreBackupUri(uri)
+    }
+  }
 
   val photoPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia()
@@ -672,166 +691,12 @@ fun SettingsScreen(
         }
       }
 
-      Card(
-        modifier = Modifier
-          .fillMaxWidth()
-          .clip(RoundedCornerShape(16.dp))
-          .testTag("settings_google_drive_card"),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-      ) {
-        Column(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp)
-        ) {
-          Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Surface(
-              modifier = Modifier.size(44.dp),
-              shape = CircleShape,
-              color = accentColor.copy(alpha = 0.15f),
-              border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.3f))
-            ) {
-              Box(contentAlignment = Alignment.Center) {
-                Icon(
-                  imageVector = Icons.Default.CloudDone,
-                  contentDescription = null,
-                  tint = accentColor,
-                  modifier = Modifier.size(24.dp)
-                )
-              }
-            }
-
-            Spacer(modifier = Modifier.width(14.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-              Text(
-                text = if (language == AppLanguage.BANGLA) "গুগল ড্রাইভ ব্যাকআপ ও রিস্টোর" else "Google Drive Backup & Restore",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-              )
-              Spacer(modifier = Modifier.height(3.dp))
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                  imageVector = Icons.Default.AccountCircle,
-                  contentDescription = null,
-                  tint = accentColor,
-                  modifier = Modifier.size(13.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                  text = if (language == AppLanguage.BANGLA) "সক্রিয় অ্যাকাউন্ট: $activeGmail" else "Active Account: $activeGmail",
-                  fontSize = 11.5.sp,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  fontWeight = FontWeight.Medium
-                )
-              }
-            }
-          }
-
-          Spacer(modifier = Modifier.height(10.dp))
-
-          Surface(
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-            modifier = Modifier.fillMaxWidth()
-          ) {
-            Column(modifier = Modifier.padding(10.dp)) {
-              Text(
-                text = if (language == AppLanguage.BANGLA) "সর্বশেষ ব্যাকআপ: $formattedTimeStr" else "Last Backup: $formattedTimeStr",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = if (lastBackupTime > 0L) accentColor else MaterialTheme.colorScheme.onSurfaceVariant
-              )
-              if (!backupStatusMessage.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                  text = backupStatusMessage,
-                  fontSize = 11.sp,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-              }
-            }
-          }
-
-          Spacer(modifier = Modifier.height(12.dp))
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-          ) {
-            Button(
-              onClick = { onGoogleDriveBackup() },
-              enabled = !isBackingUp && !isRestoring,
-              colors = ButtonDefaults.buttonColors(containerColor = accentColor),
-              shape = RoundedCornerShape(10.dp),
-              modifier = Modifier
-                .weight(1f)
-                .testTag("btn_settings_backup_now")
-            ) {
-              if (isBackingUp) {
-                CircularProgressIndicator(
-                  modifier = Modifier.size(16.dp),
-                  color = if (isDark) Color(0xFF022B1E) else Color.White,
-                  strokeWidth = 2.dp
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-              } else {
-                Icon(
-                  imageVector = Icons.Default.CloudUpload,
-                  contentDescription = null,
-                  modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-              }
-              Text(
-                text = if (language == AppLanguage.BANGLA) "ব্যাকআপ তৈরি করুন" else "Backup Now",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (isDark) Color(0xFF022B1E) else Color.White
-              )
-            }
-
-            Button(
-              onClick = { onGoogleDriveRestore(null) },
-              enabled = !isBackingUp && !isRestoring,
-              colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-              shape = RoundedCornerShape(10.dp),
-              modifier = Modifier
-                .weight(1f)
-                .testTag("btn_settings_restore")
-            ) {
-              if (isRestoring) {
-                CircularProgressIndicator(
-                  modifier = Modifier.size(16.dp),
-                  color = accentColor,
-                  strokeWidth = 2.dp
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-              } else {
-                Icon(
-                  imageVector = Icons.Default.CloudDownload,
-                  contentDescription = null,
-                  tint = accentColor,
-                  modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-              }
-              Text(
-                text = if (language == AppLanguage.BANGLA) "রিস্টোর করুন" else "Restore",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-              )
-            }
-          }
-        }
-      }
+      com.example.ui.components.SupabaseSyncSection(
+        activeEmail = activeGmail,
+        language = language,
+        accentColor = accentColor,
+        isDark = isDark
+      )
 
       Spacer(modifier = Modifier.height(10.dp))
 

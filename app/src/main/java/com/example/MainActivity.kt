@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -744,12 +745,64 @@ class MainActivity : FragmentActivity() {
                     )
                   },
                   onGoogleDriveBackup = {
-                    viewModel.triggerAutoBackup()
-                  },
-                  onGoogleDriveRestore = { _ ->
-                    viewModel.performDriveRestore(
+                    viewModel.triggerAutoBackup(
                       onSuccess = { msg ->
                         restoreResultDialogMessage = msg
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
+                  },
+                  onGoogleDriveRestore = { uri ->
+                    if (uri != null) {
+                      viewModel.restoreFromUri(
+                        uri = uri,
+                        onSuccess = { msg ->
+                          restoreResultDialogMessage = msg
+                        },
+                        onError = { err ->
+                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
+                      )
+                    } else {
+                      viewModel.performDriveRestore(
+                        onSuccess = { msg ->
+                          restoreResultDialogMessage = msg
+                        },
+                        onError = { err ->
+                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                        }
+                      )
+                    }
+                  },
+                  onSaveBackupUri = { uri ->
+                    viewModel.saveBackupToUri(
+                      uri = uri,
+                      onSuccess = { msg ->
+                        restoreResultDialogMessage = msg
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
+                  },
+                  onRestoreBackupUri = { uri ->
+                    viewModel.restoreFromUri(
+                      uri = uri,
+                      onSuccess = { msg ->
+                        restoreResultDialogMessage = msg
+                      },
+                      onError = { err ->
+                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                      }
+                    )
+                  },
+                  onShareBackup = {
+                    viewModel.getShareBackupIntent(
+                      context = context,
+                      onReady = { intent ->
+                        context.startActivity(intent)
                       },
                       onError = { err ->
                         Toast.makeText(context, err, Toast.LENGTH_LONG).show()
