@@ -105,6 +105,7 @@ dependencies {
   implementation("androidx.biometric:biometric:1.1.0")
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
+  implementation(libs.play.services.auth)
   implementation(libs.googleid)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)

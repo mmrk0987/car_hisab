@@ -51,6 +51,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -101,6 +104,7 @@ class MainActivity : FragmentActivity() {
       val profile by viewModel.userProfile.collectAsStateWithLifecycle()
       val pendingRestoreMetadata by viewModel.pendingRestoreMetadata.collectAsStateWithLifecycle()
       val context = LocalContext.current
+      var restoreResultDialogMessage by remember { mutableStateOf<String?>(null) }
 
       LaunchedEffect(profile.isLoggedIn) {
         if (profile.isLoggedIn) {
@@ -745,7 +749,7 @@ class MainActivity : FragmentActivity() {
                   onGoogleDriveRestore = { _ ->
                     viewModel.performDriveRestore(
                       onSuccess = { msg ->
-                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        restoreResultDialogMessage = msg
                       },
                       onError = { err ->
                         Toast.makeText(context, err, Toast.LENGTH_LONG).show()
@@ -832,7 +836,7 @@ class MainActivity : FragmentActivity() {
                     onClick = {
                       viewModel.performDriveRestore(
                         onSuccess = { msg ->
-                          Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                          restoreResultDialogMessage = msg
                         },
                         onError = { err ->
                           Toast.makeText(context, err, Toast.LENGTH_LONG).show()
@@ -848,6 +852,30 @@ class MainActivity : FragmentActivity() {
                     onClick = { viewModel.dismissRestorePrompt() }
                   ) {
                     Text(text = if (language == AppLanguage.BANGLA) "এড়িয়ে যান" else "Skip")
+                  }
+                }
+              )
+            }
+
+            // Detailed Restore Result Summary Dialog
+            restoreResultDialogMessage?.let { dialogMsg ->
+              AlertDialog(
+                onDismissRequest = { restoreResultDialogMessage = null },
+                title = {
+                  Text(
+                    text = if (language == AppLanguage.BANGLA) "ডাটা রিস্টোর বিবরণ" else "Data Restore Details",
+                    fontWeight = FontWeight.Bold
+                  )
+                },
+                text = {
+                  Text(
+                    text = dialogMsg,
+                    style = MaterialTheme.typography.bodyMedium
+                  )
+                },
+                confirmButton = {
+                  Button(onClick = { restoreResultDialogMessage = null }) {
+                    Text(text = if (language == AppLanguage.BANGLA) "ঠিক আছে" else "OK")
                   }
                 }
               )

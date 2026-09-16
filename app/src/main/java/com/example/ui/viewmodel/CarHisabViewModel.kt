@@ -1207,8 +1207,12 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       when (result) {
         is BackupResult.Success -> {
           _lastBackupTime.value = result.metadata.timestamp
-          val msg = if (isBangla) "গুগল ড্রাইভ ব্যাকআপ সম্পন্ন (${result.metadata.dateString})"
-          else "Google Drive backup complete (${result.metadata.dateString})"
+          val monthDetail = if (result.metadata.monthlyFilesCount > 0) {
+            if (isBangla) " (${result.metadata.monthlyFilesCount} টি মাসের আলাদা ফাইলসহ)"
+            else " (${result.metadata.monthlyFilesCount} distinct monthly files)"
+          } else ""
+          val msg = if (isBangla) "গুগল ড্রাইভ ও ক্লাউড ব্যাকআপ সম্পন্ন (${result.metadata.dateString})$monthDetail"
+          else "Google Drive & Cloud backup complete (${result.metadata.dateString})$monthDetail"
           _backupStatusMessage.value = msg
         }
         is BackupResult.Empty -> {
@@ -1273,10 +1277,24 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
           if (updatedMeta.timestamp > 0L) {
             _lastBackupTime.value = updatedMeta.timestamp
           }
+
+          val breakdownText = if (result.monthlyBreakdown.isNotEmpty()) {
+            val header = if (isBangla) "\n\nমাস ভিত্তিক বিবরণ:\n" else "\n\nMonthly Breakdown:\n"
+            val rows = result.monthlyBreakdown.entries.joinToString("\n") { (mLabel, count) ->
+              if (isBangla) "• $mLabel: $count টি ট্রিপ" else "• $mLabel: $count trips"
+            }
+            val footer = if (isBangla)
+              "\n\nকোনো মাসের তথ্য মেশেনি — প্রতিটি ট্রিপ নির্দিষ্ট ফাইলের মাধ্যমে স্ব-স্ব মাসে সংরক্ষিত হয়েছে।"
+            else
+              "\n\nNo month data mixed — each trip is preserved distinctly in its specific month."
+            header + rows + footer
+          } else ""
+
           val msg = if (isBangla)
-            "সফলভাবে ${result.tripsCount} টি ট্রিপ ও ${result.bookingsCount} টি বুকিং রিস্টোর করা হয়েছে!"
+            "সফলভাবে মোট ${result.tripsCount} টি ট্রিপ ও ${result.bookingsCount} টি বুকিং রিস্টোর করা হয়েছে!$breakdownText"
           else
-            "Successfully restored ${result.tripsCount} trips and ${result.bookingsCount} bookings!"
+            "Successfully restored ${result.tripsCount} trips and ${result.bookingsCount} bookings!$breakdownText"
+
           _backupStatusMessage.value = msg
           onSuccess(msg)
         }
