@@ -65,7 +65,7 @@ fun SupabaseSyncSection(
 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (language == AppLanguage.BANGLA) "সুপাবেস ক্লাউড সিঙ্ক" else "Supabase Cloud Sync",
+                        text = if (language == AppLanguage.BANGLA) "ইউজার ডেটা ক্লাউড সিঙ্ক" else "User Data Cloud Sync",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface
