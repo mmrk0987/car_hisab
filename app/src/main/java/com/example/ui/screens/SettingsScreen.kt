@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.CircularProgressIndicator
-import com.example.data.backup.GoogleDriveBackupManager
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DateRange
@@ -116,16 +115,7 @@ fun SettingsScreen(
   onOpenSubscription: () -> Unit = {},
   onOpenDocuments: () -> Unit = {},
   onExportTrips: (format: ExportFormat, tripsToExport: List<TripEntity>) -> Unit = { _, _ -> },
-  lastBackupTime: Long = 0L,
   lastBackupCount: Int = 0,
-  isBackingUp: Boolean = false,
-  isRestoring: Boolean = false,
-  backupStatusMessage: String? = null,
-  onGoogleDriveBackup: () -> Unit = {},
-  onGoogleDriveRestore: (Uri?) -> Unit = {},
-  onSaveBackupUri: (Uri) -> Unit = {},
-  onRestoreBackupUri: (Uri) -> Unit = {},
-  onShareBackup: () -> Unit = {},
   onLogout: () -> Unit = {}
 ) {
   val context = LocalContext.current
@@ -136,21 +126,6 @@ fun SettingsScreen(
   var adminSelectedDurationDays by remember { mutableStateOf(30) }
   var generatedResultKey by remember { mutableStateOf("") }
 
-  val createBackupDocumentLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.CreateDocument("application/zip")
-  ) { uri: Uri? ->
-    if (uri != null) {
-      onSaveBackupUri(uri)
-    }
-  }
-
-  val openRestoreDocumentLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.OpenDocument()
-  ) { uri: Uri? ->
-    if (uri != null) {
-      onRestoreBackupUri(uri)
-    }
-  }
 
   val photoPickerLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.PickVisualMedia()
@@ -681,18 +656,9 @@ fun SettingsScreen(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Card 6: GOOGLE DRIVE BACKUP & RESTORE
-      val activeGmail = profile.driverEmail.ifBlank { profile.savedEmail }.ifBlank { "অজানা অ্যাকাউন্ট" }
-      val formattedTimeStr = remember(lastBackupTime, language) {
-        if (lastBackupTime > 0L) {
-          GoogleDriveBackupManager.formatDateString(lastBackupTime, isBangla = language == AppLanguage.BANGLA)
-        } else {
-          if (language == AppLanguage.BANGLA) "কোন ব্যাকআপ পাওয়া যায়নি" else "No backup found"
-        }
-      }
 
       com.example.ui.components.SupabaseSyncSection(
-        activeEmail = activeGmail,
+        activeEmail = profile.driverEmail.ifBlank { profile.savedEmail }.ifBlank { "অজানা অ্যাকাউন্ট" },
         language = language,
         accentColor = accentColor,
         isDark = isDark

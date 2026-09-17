@@ -19,10 +19,6 @@ import com.example.data.model.WeekTrend
 import com.example.data.repository.BookingRepository
 import com.example.data.repository.TripRepository
 import android.util.Log
-import com.example.data.backup.BackupMetadata
-import com.example.data.backup.BackupResult
-import com.example.data.backup.GoogleDriveBackupManager
-import com.example.data.backup.RestoreResult
 import com.example.data.repository.UserProfile
 import com.example.data.repository.UserPreferencesRepository
 import com.example.ui.i18n.AppLanguage
@@ -182,7 +178,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
       isProfileCompleted = true
     )
     userPrefsRepo.updateProfile(updatedProfile)
-    checkDriveBackupOnLogin()
     navigateTo(AppScreen.DASHBOARD)
   }
 
@@ -474,7 +469,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         notes = notes.trim()
       )
       bookingRepo.insertBooking(booking)
-      triggerAutoBackup()
     }
   }
 
@@ -549,7 +543,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
           )
         }
 
-        triggerAutoBackup()
         onCompleted()
       } catch (e: Exception) {
         val errorMsg = e.localizedMessage ?: "বুকিং থেকে ট্রিপ তৈরিতে সমস্যা হয়েছে।"
@@ -557,7 +550,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         if (onError != null) {
           onError(errorMsg)
         } else {
-          _backupStatusMessage.value = "বুকিং ট্রিপ সংরক্ষণে সমস্যা: $errorMsg"
         }
       }
     }
@@ -609,7 +601,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
             }
           }
 
-          triggerAutoBackup()
         } catch (e: Exception) {
           val errorMsg = e.localizedMessage ?: "মবিল রেকর্ড সংরক্ষণে ভুল হয়েছে।"
           Log.e("TripSaveError", "Failed to log mobil change trip: ${e.message}", e)
@@ -1055,7 +1046,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         _passengerNameInput.value = ""
         _passengerPhoneInput.value = ""
         _tripDate.value = SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date())
-        triggerAutoBackup()
         onSuccess()
       } catch (e: Exception) {
         val errorMsg = e.localizedMessage ?: "ট্রিপ সংরক্ষণে ব্যর্থ হয়েছে।"
@@ -1063,7 +1053,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         if (onError != null) {
           onError(errorMsg)
         } else {
-          _backupStatusMessage.value = "ট্রিপ সংরক্ষণে সমস্যা: $errorMsg"
         }
       }
     }
@@ -1073,7 +1062,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     viewModelScope.launch {
       try {
         tripRepo.deleteTrip(trip)
-        triggerAutoBackup()
       } catch (e: Exception) {
         Log.e("TripSaveError", "Failed to delete trip: ${e.message}", e)
       }
@@ -1101,7 +1089,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         }
 
         tripRepo.updateTrip(updated)
-        triggerAutoBackup()
         onSuccess()
       } catch (e: Exception) {
         val errorMsg = e.localizedMessage ?: "ট্রিপ আপডেট এ ভুল হয়েছে।"
@@ -1109,7 +1096,6 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         if (onError != null) {
           onError(errorMsg)
         } else {
-          _backupStatusMessage.value = "ট্রিপ আপডেটে সমস্যা: $errorMsg"
         }
       }
     }
@@ -1163,248 +1149,4 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     }
   }
 
-  val isAutoWeeklyBackupReminderEnabled: StateFlow<Boolean> = userPrefsRepo.autoWeeklyBackupReminderFlow
-
-  fun setAutoWeeklyBackupReminderEnabled(context: Context, enabled: Boolean) {
-    userPrefsRepo.setAutoWeeklyBackupReminderEnabled(enabled)
-    if (enabled) {
-      com.example.receiver.WeeklyBackupReminderReceiver.scheduleWeeklyBackupReminder(context)
-    } else {
-      com.example.receiver.WeeklyBackupReminderReceiver.cancelWeeklyBackupReminder(context)
-    }
-  }
-
-  private val _backupStatusMessage = MutableStateFlow<String?>("অটো ব্যাকআপ চালু আছে (গুগল ড্রাইভে স্বয়ংক্রিয়)")
-  val backupStatusMessage: StateFlow<String?> = _backupStatusMessage.asStateFlow()
-
-  private val _pendingRestoreMetadata = MutableStateFlow<BackupMetadata?>(null)
-  val pendingRestoreMetadata: StateFlow<BackupMetadata?> = _pendingRestoreMetadata.asStateFlow()
-
-  private val _lastBackupTime = MutableStateFlow(userPrefsRepo.getLastDriveBackupTime())
-  val lastBackupTime: StateFlow<Long> = _lastBackupTime.asStateFlow()
-
-  private val _isBackingUp = MutableStateFlow(false)
-  val isBackingUp: StateFlow<Boolean> = _isBackingUp.asStateFlow()
-
-  private val _isRestoring = MutableStateFlow(false)
-  val isRestoring: StateFlow<Boolean> = _isRestoring.asStateFlow()
-
-  fun clearBackupStatusMessage() {
-    _backupStatusMessage.value = null
-  }
-
-  fun triggerAutoBackup(
-    email: String = userProfile.value.driverEmail,
-    onSuccess: (String) -> Unit = {},
-    onError: (String) -> Unit = {}
-  ) {
-    viewModelScope.launch {
-      _isBackingUp.value = true
-      val context = getApplication<Application>().applicationContext
-      val isBangla = language.value == AppLanguage.BANGLA
-      val result = GoogleDriveBackupManager.performDeviceAutoBackup(
-        context = context,
-        isBangla = isBangla
-      )
-      _isBackingUp.value = false
-      when (result) {
-        is BackupResult.Success -> {
-          _lastBackupTime.value = result.metadata.timestamp
-          val msg = if (isBangla)
-            "অটো-ব্যাকআপ সফল হয়েছে! (${result.metadata.dateString})\nফাইল সাইজ: ${result.metadata.sizeString}"
-          else
-            "Auto-backup successful! (${result.metadata.dateString})\nSize: ${result.metadata.sizeString}"
-          _backupStatusMessage.value = msg
-          onSuccess(msg)
-        }
-        is BackupResult.Empty -> {
-          _backupStatusMessage.value = result.message
-          onError(result.message)
-        }
-        is BackupResult.Error -> {
-          _backupStatusMessage.value = result.message
-          onError(result.message)
-        }
-      }
-    }
-  }
-
-  fun saveBackupToUri(
-    uri: Uri,
-    onSuccess: (String) -> Unit = {},
-    onError: (String) -> Unit = {}
-  ) {
-    viewModelScope.launch {
-      _isBackingUp.value = true
-      val context = getApplication<Application>().applicationContext
-      val isBangla = language.value == AppLanguage.BANGLA
-      val success = GoogleDriveBackupManager.writeBackupToUri(context, uri)
-      _isBackingUp.value = false
-      if (success) {
-        val now = System.currentTimeMillis()
-        _lastBackupTime.value = now
-        val dateStr = GoogleDriveBackupManager.formatDateString(now, isBangla)
-        val msg = if (isBangla)
-          "আপনার নির্বাচিত গুগল ড্রাইভ / ফোল্ডারে ব্যাকআপ ফাইল সফলভাবে সংরক্ষিত হয়েছে!\nতারিখ: $dateStr\n(মাসের কোনো হিসাব মেশেনি - প্রতিটি মাস আলাদা ফাইলে সাজানো আছে)"
-        else
-          "Backup file saved successfully to your selected Google Drive / storage!\nDate: $dateStr\n(Month records are separated and intact)"
-        _backupStatusMessage.value = msg
-        onSuccess(msg)
-      } else {
-        val err = if (isBangla) "ফাইলে ব্যাকআপ সংরক্ষণ করা সম্ভব হয়নি।" else "Failed to save backup to file."
-        _backupStatusMessage.value = err
-        onError(err)
-      }
-    }
-  }
-
-  fun restoreFromUri(
-    uri: Uri,
-    onSuccess: (String) -> Unit = {},
-    onError: (String) -> Unit = {}
-  ) {
-    viewModelScope.launch {
-      _isRestoring.value = true
-      val context = getApplication<Application>().applicationContext
-      val isBangla = language.value == AppLanguage.BANGLA
-      val result = GoogleDriveBackupManager.restoreFromUri(context, uri, isBangla)
-      _isRestoring.value = false
-      when (result) {
-        is RestoreResult.Success -> {
-          _pendingRestoreMetadata.value = null
-          notifyDatabaseUpdated()
-          _lastBackupTime.value = System.currentTimeMillis()
-
-          val breakdownText = if (result.monthlyBreakdown.isNotEmpty()) {
-            val header = if (isBangla) "\n\nমাসভিত্তিক সংরক্ষিত ট্রিপ:\n" else "\n\nMonth-wise Restored Trips:\n"
-            val rows = result.monthlyBreakdown.entries.joinToString("\n") { (mLabel, count) ->
-              if (isBangla) "• $mLabel: $count টি ট্রিপ" else "• $mLabel: $count trips"
-            }
-            val footer = if (isBangla)
-              "\n\nকোনো মাসের তথ্য মেশেনি — প্রতিটি ট্রিপ নির্দিষ্ট তারিখ ও মাসে নিখুঁতভাবে রিস্টোর হয়েছে।"
-            else
-              "\n\nNo month records mixed — all trips restored into their exact original months."
-            header + rows + footer
-          } else ""
-
-          val msg = if (isBangla)
-            "সফলভাবে মোট ${result.tripsCount} টি ট্রিপ ও ${result.bookingsCount} টি বুকিং রিস্টোর করা হয়েছে!$breakdownText"
-          else
-            "Successfully restored ${result.tripsCount} trips and ${result.bookingsCount} bookings!$breakdownText"
-
-          _backupStatusMessage.value = msg
-          onSuccess(msg)
-        }
-        is RestoreResult.Error -> {
-          _backupStatusMessage.value = result.message
-          onError(result.message)
-        }
-      }
-    }
-  }
-
-  fun getShareBackupIntent(
-    context: Context,
-    onReady: (Intent) -> Unit,
-    onError: (String) -> Unit
-  ) {
-    viewModelScope.launch {
-      _isBackingUp.value = true
-      val intent = GoogleDriveBackupManager.createShareBackupIntent(context)
-      _isBackingUp.value = false
-      if (intent != null) {
-        val now = System.currentTimeMillis()
-        _lastBackupTime.value = now
-        val isBangla = language.value == AppLanguage.BANGLA
-        val msg = if (isBangla) "ব্যাকআপ ফাইল তৈরি হয়েছে, গুগল ড্রাইভ অথবা পছন্দের অ্যাপে সেভ করুন।"
-        else "Backup package prepared. Select Google Drive or app to save."
-        _backupStatusMessage.value = msg
-        onReady(intent)
-      } else {
-        val isBangla = language.value == AppLanguage.BANGLA
-        val err = if (isBangla) "ব্যাকআপ ফাইল তৈরিতে ব্যর্থ (তথ্য ফাঁকা থাকতে পারে)।" else "Failed to create backup package."
-        onError(err)
-      }
-    }
-  }
-
-  fun checkDriveBackupOnLogin() {
-    viewModelScope.launch {
-      val context = getApplication<Application>().applicationContext
-      val isBangla = language.value == AppLanguage.BANGLA
-      val activeEmail = userProfile.value.driverEmail.ifBlank { userProfile.value.savedEmail }
-      val metadata = GoogleDriveBackupManager.checkForBackup(
-        context = context,
-        currentAccountEmail = activeEmail,
-        isBangla = isBangla
-      )
-      if (metadata.exists) {
-        _lastBackupTime.value = metadata.timestamp
-        if (!metadata.accountMismatch) {
-          _pendingRestoreMetadata.value = metadata
-        }
-      }
-    }
-  }
-
-  fun dismissRestorePrompt() {
-    _pendingRestoreMetadata.value = null
-  }
-
-  fun performDriveRestore(
-    email: String = userProfile.value.driverEmail,
-    onSuccess: (String) -> Unit = {},
-    onError: (String) -> Unit = {}
-  ) {
-    viewModelScope.launch {
-      _isRestoring.value = true
-      val context = getApplication<Application>().applicationContext
-      val isBangla = language.value == AppLanguage.BANGLA
-      val activeEmail = email.ifBlank { userProfile.value.driverEmail }.ifBlank { userProfile.value.savedEmail }
-      val result = GoogleDriveBackupManager.restoreBackup(
-        context = context,
-        currentAccountEmail = activeEmail,
-        isBangla = isBangla
-      )
-      _isRestoring.value = false
-      when (result) {
-        is RestoreResult.Success -> {
-          _pendingRestoreMetadata.value = null
-          notifyDatabaseUpdated()
-          val updatedMeta = GoogleDriveBackupManager.checkForBackup(
-            context = context,
-            currentAccountEmail = activeEmail,
-            isBangla = isBangla
-          )
-          if (updatedMeta.timestamp > 0L) {
-            _lastBackupTime.value = updatedMeta.timestamp
-          }
-
-          val breakdownText = if (result.monthlyBreakdown.isNotEmpty()) {
-            val header = if (isBangla) "\n\nমাস ভিত্তিক বিবরণ:\n" else "\n\nMonthly Breakdown:\n"
-            val rows = result.monthlyBreakdown.entries.joinToString("\n") { (mLabel, count) ->
-              if (isBangla) "• $mLabel: $count টি ট্রিপ" else "• $mLabel: $count trips"
-            }
-            val footer = if (isBangla)
-              "\n\nকোনো মাসের তথ্য মেশেনি — প্রতিটি ট্রিপ নির্দিষ্ট ফাইলের মাধ্যমে স্ব-স্ব মাসে সংরক্ষিত হয়েছে।"
-            else
-              "\n\nNo month data mixed — each trip is preserved distinctly in its specific month."
-            header + rows + footer
-          } else ""
-
-          val msg = if (isBangla)
-            "সফলভাবে মোট ${result.tripsCount} টি ট্রিপ ও ${result.bookingsCount} টি বুকিং রিস্টোর করা হয়েছে!$breakdownText"
-          else
-            "Successfully restored ${result.tripsCount} trips and ${result.bookingsCount} bookings!$breakdownText"
-
-          _backupStatusMessage.value = msg
-          onSuccess(msg)
-        }
-        is RestoreResult.Error -> {
-          _backupStatusMessage.value = result.message
-          onError(result.message)
-        }
-      }
-    }
-  }
 }

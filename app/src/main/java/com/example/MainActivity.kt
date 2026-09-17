@@ -95,21 +95,16 @@ class MainActivity : FragmentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
 
-    com.example.receiver.WeeklyBackupReminderReceiver.createNotificationChannel(this)
-    com.example.receiver.WeeklyBackupReminderReceiver.scheduleWeeklyBackupReminder(this)
 
     setContent {
       val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
       val language by viewModel.language.collectAsStateWithLifecycle()
       val currentScreen by viewModel.currentScreen.collectAsStateWithLifecycle()
       val profile by viewModel.userProfile.collectAsStateWithLifecycle()
-      val pendingRestoreMetadata by viewModel.pendingRestoreMetadata.collectAsStateWithLifecycle()
       val context = LocalContext.current
-      var restoreResultDialogMessage by remember { mutableStateOf<String?>(null) }
 
       LaunchedEffect(profile.isLoggedIn) {
         if (profile.isLoggedIn) {
-          viewModel.checkDriveBackupOnLogin()
         }
       }
 
@@ -319,7 +314,6 @@ class MainActivity : FragmentActivity() {
                   language = language,
                   onProceed = {
                     if (profile.isLoggedIn) {
-                      viewModel.checkDriveBackupOnLogin()
                       viewModel.navigateTo(AppScreen.DASHBOARD)
                     } else {
                       viewModel.navigateTo(AppScreen.LOGIN)
@@ -343,13 +337,11 @@ class MainActivity : FragmentActivity() {
                   savedRememberEmail = profile.rememberEmail,
                   onLoginSuccess = { email, remember ->
                     viewModel.updateRememberEmail(email, remember)
-                    viewModel.checkDriveBackupOnLogin()
                     viewModel.navigateTo(AppScreen.DASHBOARD)
                   },
                   onBiometricLogin = { onSuccess, onError ->
                     viewModel.loginWithBiometric(
                       onSuccess = { email ->
-                        viewModel.checkDriveBackupOnLogin()
                         viewModel.navigateTo(AppScreen.DASHBOARD)
                         onSuccess(email)
                       },
@@ -694,20 +686,12 @@ class MainActivity : FragmentActivity() {
 
               AppScreen.SETTINGS -> {
                 val allTripsForExport by viewModel.allTrips.collectAsStateWithLifecycle()
-                val backupStatusMessage by viewModel.backupStatusMessage.collectAsStateWithLifecycle()
-                val lastBackupTime by viewModel.lastBackupTime.collectAsStateWithLifecycle()
-                val isBackingUp by viewModel.isBackingUp.collectAsStateWithLifecycle()
-                val isRestoring by viewModel.isRestoring.collectAsStateWithLifecycle()
 
                 SettingsScreen(
                   language = language,
                   themeMode = themeMode,
                   profile = profile,
                   trips = allTripsForExport,
-                  lastBackupTime = lastBackupTime,
-                  isBackingUp = isBackingUp,
-                  isRestoring = isRestoring,
-                  backupStatusMessage = backupStatusMessage,
                   onLanguageChange = { viewModel.setLanguage(it) },
                   onOpenLanguageSettings = { viewModel.navigateTo(AppScreen.LANGUAGE_SETTINGS) },
                   onOpenDriveBackup = { /* No-op or navigate */ },
@@ -738,71 +722,6 @@ class MainActivity : FragmentActivity() {
                       trips = selectedTrips,
                       onSuccess = {
                         Toast.makeText(context, AppStrings.exportSuccess(language), Toast.LENGTH_SHORT).show()
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onGoogleDriveBackup = {
-                    viewModel.triggerAutoBackup(
-                      onSuccess = { msg ->
-                        restoreResultDialogMessage = msg
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onGoogleDriveRestore = { uri ->
-                    if (uri != null) {
-                      viewModel.restoreFromUri(
-                        uri = uri,
-                        onSuccess = { msg ->
-                          restoreResultDialogMessage = msg
-                        },
-                        onError = { err ->
-                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                        }
-                      )
-                    } else {
-                      viewModel.performDriveRestore(
-                        onSuccess = { msg ->
-                          restoreResultDialogMessage = msg
-                        },
-                        onError = { err ->
-                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                        }
-                      )
-                    }
-                  },
-                  onSaveBackupUri = { uri ->
-                    viewModel.saveBackupToUri(
-                      uri = uri,
-                      onSuccess = { msg ->
-                        restoreResultDialogMessage = msg
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onRestoreBackupUri = { uri ->
-                    viewModel.restoreFromUri(
-                      uri = uri,
-                      onSuccess = { msg ->
-                        restoreResultDialogMessage = msg
-                      },
-                      onError = { err ->
-                        Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                      }
-                    )
-                  },
-                  onShareBackup = {
-                    viewModel.getShareBackupIntent(
-                      context = context,
-                      onReady = { intent ->
-                        context.startActivity(intent)
                       },
                       onError = { err ->
                         Toast.makeText(context, err, Toast.LENGTH_LONG).show()
@@ -865,74 +784,6 @@ class MainActivity : FragmentActivity() {
               }
             }
 
-            // WhatsApp-Style Restore Prompt Dialog on Login
-            pendingRestoreMetadata?.let { metadata ->
-              val dialogText = if (language == AppLanguage.BANGLA) {
-                "গুগল ড্রাইভে ব্যাকআপ পাওয়া গেছে (তারিখ: ${metadata.dateString}, সাইজ: ${metadata.sizeString})। রিস্টোর করতে চান?"
-              } else {
-                "Google Drive backup found (Date: ${metadata.dateString}, Size: ${metadata.sizeString}). Do you wish to restore?"
-              }
-
-              AlertDialog(
-                onDismissRequest = { viewModel.dismissRestorePrompt() },
-                title = {
-                  Text(
-                    text = if (language == AppLanguage.BANGLA) "গুগল ড্রাইভ ব্যাকআপ" else "Google Drive Backup",
-                    fontWeight = FontWeight.Bold
-                  )
-                },
-                text = {
-                  Text(text = dialogText)
-                },
-                confirmButton = {
-                  Button(
-                    onClick = {
-                      viewModel.performDriveRestore(
-                        onSuccess = { msg ->
-                          restoreResultDialogMessage = msg
-                        },
-                        onError = { err ->
-                          Toast.makeText(context, err, Toast.LENGTH_LONG).show()
-                        }
-                      )
-                    }
-                  ) {
-                    Text(text = if (language == AppLanguage.BANGLA) "রিস্টোর করুন" else "Restore")
-                  }
-                },
-                dismissButton = {
-                  OutlinedButton(
-                    onClick = { viewModel.dismissRestorePrompt() }
-                  ) {
-                    Text(text = if (language == AppLanguage.BANGLA) "এড়িয়ে যান" else "Skip")
-                  }
-                }
-              )
-            }
-
-            // Detailed Restore Result Summary Dialog
-            restoreResultDialogMessage?.let { dialogMsg ->
-              AlertDialog(
-                onDismissRequest = { restoreResultDialogMessage = null },
-                title = {
-                  Text(
-                    text = if (language == AppLanguage.BANGLA) "ডাটা রিস্টোর বিবরণ" else "Data Restore Details",
-                    fontWeight = FontWeight.Bold
-                  )
-                },
-                text = {
-                  Text(
-                    text = dialogMsg,
-                    style = MaterialTheme.typography.bodyMedium
-                  )
-                },
-                confirmButton = {
-                  Button(onClick = { restoreResultDialogMessage = null }) {
-                    Text(text = if (language == AppLanguage.BANGLA) "ঠিক আছে" else "OK")
-                  }
-                }
-              )
-            }
           }
         }
       }

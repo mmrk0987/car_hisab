@@ -220,18 +220,6 @@ class UserPreferencesRepository(context: Context) {
     _profileFlow.value = profile
   }
 
-  private val _autoWeeklyBackupReminderFlow = MutableStateFlow(isAutoWeeklyBackupReminderEnabled())
-  val autoWeeklyBackupReminderFlow: StateFlow<Boolean> = _autoWeeklyBackupReminderFlow.asStateFlow()
-
-  fun isAutoWeeklyBackupReminderEnabled(): Boolean {
-    return prefs.getBoolean("key_auto_weekly_backup_reminder", true)
-  }
-
-  fun setAutoWeeklyBackupReminderEnabled(enabled: Boolean) {
-    prefs.edit().putBoolean("key_auto_weekly_backup_reminder", enabled).apply()
-    _autoWeeklyBackupReminderFlow.value = enabled
-  }
-
   fun getLastDriveBackupTime(): Long {
     return prefs.getLong("key_last_drive_backup_time", 0L)
   }
