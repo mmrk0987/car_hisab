@@ -1,3 +1,5 @@
+import java.text.SimpleDateFormat
+import java.util.Date
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
 plugins {
@@ -17,8 +19,8 @@ android {
     applicationId = "com.aistudio.carhisab.dxvtr"
     minSdk = 24
     targetSdk = 36
-    versionCode = 5
-    versionName = "5.2.0"
+    versionCode = 9
+    versionName = "9.0.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -151,6 +153,7 @@ dependencies {
 //  "ksp"(libs.moshi.kotlin.codegen)
 }
 
+val buildTime = SimpleDateFormat("dd-MMM-yyyy_hh-mma").format(Date())
 base {
-  archivesName.set("Car_Hisab_v" + android.defaultConfig.versionName)
+  archivesName.set("Car_Hisab_v${android.defaultConfig.versionName}_${buildTime}")
 }

@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
@@ -672,6 +673,73 @@ fun SettingsScreen(
         accentColor = accentColor,
         isDark = isDark
       )
+
+      Spacer(modifier = Modifier.height(10.dp))
+
+      // DOWNLOAD LATEST APP CARD
+      Card(
+        modifier = Modifier
+          .fillMaxWidth()
+          .clip(RoundedCornerShape(16.dp))
+          .clickable {
+            val intent = android.content.Intent(
+              android.content.Intent.ACTION_VIEW,
+              android.net.Uri.parse("https://drive.google.com/drive/folders/1sDpG_D1fJbO0vtM9zBoqa10v6FcfkO2-")
+            )
+            context.startActivity(intent)
+          }
+          .testTag("settings_download_app_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = accentColor.copy(alpha = 0.1f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accentColor.copy(alpha = 0.3f))
+      ) {
+        Row(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+          Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+          ) {
+            Surface(
+              modifier = Modifier.size(44.dp),
+              shape = CircleShape,
+              color = accentColor.copy(alpha = 0.2f),
+            ) {
+              Icon(
+                imageVector = Icons.Default.CloudDownload,
+                contentDescription = "Download App",
+                tint = accentColor,
+                modifier = Modifier.padding(10.dp)
+              )
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column {
+              Text(
+                text = if (language == AppLanguage.BANGLA) "সর্বশেষ ভার্সন ডাউনলোড করুন" else "Download Latest App from here",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+              )
+              Spacer(modifier = Modifier.height(2.dp))
+              Text(
+                text = if (language == AppLanguage.BANGLA) "গুগল ড্রাইভ থেকে আপডেট করুন" else "Update from Google Drive",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+              )
+            }
+          }
+          Icon(
+            imageVector = Icons.Default.KeyboardArrowRight,
+            contentDescription = "Go",
+            tint = accentColor,
+            modifier = Modifier.size(24.dp)
+          )
+        }
+      }
 
       Spacer(modifier = Modifier.height(10.dp))
 
