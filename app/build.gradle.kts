@@ -41,8 +41,9 @@ android {
 
   buildTypes {
     release {
-      isCrunchPngs = false
-      isMinifyEnabled = false
+      isCrunchPngs = true
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
@@ -87,12 +88,12 @@ secrets {
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
 dependencies {
-  implementation("io.github.jan-tennert.supabase:postgrest-kt:3.0.0")
-  implementation("io.github.jan-tennert.supabase:auth-kt:3.0.0")
-  implementation("io.ktor:ktor-client-android:3.0.0")
+//  implementation("io.github.jan-tennert.supabase:postgrest-kt:3.0.0")
+//  implementation("io.github.jan-tennert.supabase:auth-kt:3.0.0")
+//  implementation("io.ktor:ktor-client-android:3.0.0")
 
   implementation(platform(libs.androidx.compose.bom))
-  implementation(platform(libs.firebase.bom))
+//  implementation(platform(libs.firebase.bom))
 
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material.icons.core)
@@ -102,6 +103,7 @@ dependencies {
   implementation(libs.androidx.compose.ui.graphics)
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
+  implementation("androidx.security:security-crypto:1.1.0-alpha06")
   implementation("androidx.biometric:biometric:1.1.0")
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
@@ -114,17 +116,17 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
-  implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
-  implementation(libs.firebase.appcheck.recaptcha)
-  implementation(libs.firebase.appcheck.debug)
+//  implementation(libs.converter.moshi)
+//  implementation(libs.firebase.ai)
+//  implementation(libs.firebase.appcheck.recaptcha)
+//  implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
+//  implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
-  implementation(libs.retrofit)
-  implementation(libs.androidx.work.runtime.ktx)
+//  implementation(libs.retrofit)
+//  implementation(libs.androidx.work.runtime.ktx)
 
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
@@ -146,5 +148,5 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.tooling)
 
   "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
+//  "ksp"(libs.moshi.kotlin.codegen)
 }
