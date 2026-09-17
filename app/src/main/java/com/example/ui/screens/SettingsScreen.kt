@@ -119,6 +119,15 @@ fun SettingsScreen(
   onLogout: () -> Unit = {}
 ) {
   val context = LocalContext.current
+  val packageManager = context.packageManager
+  val dynamicVersionName = remember {
+    try {
+      packageManager.getPackageInfo(context.packageName, 0).versionName
+    } catch (e: Exception) {
+      BuildConfig.VERSION_NAME
+    }
+  }
+
   val scrollState = rememberScrollState()
   var versionTapCount by remember { mutableStateOf(0) }
   var showAdminGeneratorDialog by remember { mutableStateOf(false) }
@@ -737,7 +746,7 @@ fun SettingsScreen(
         }
         Spacer(modifier = Modifier.height(5.dp))
         Text(
-          text = if (language == AppLanguage.BANGLA) "সংস্করণ v${BuildConfig.VERSION_NAME} • নিরাপদ ও অটো ব্যাকআপ সক্রিয়" else "Version ${BuildConfig.VERSION_NAME} • Android Auto Backup Enabled",
+          text = if (language == AppLanguage.BANGLA) "সংস্করণ v${dynamicVersionName} • নিরাপদ ও অটো ব্যাকআপ সক্রিয়" else "Version ${dynamicVersionName} • Android Auto Backup Enabled",
           fontSize = 11.sp,
           color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
           modifier = Modifier
