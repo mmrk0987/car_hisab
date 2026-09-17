@@ -151,6 +151,3 @@ dependencies {
 //  "ksp"(libs.moshi.kotlin.codegen)
 }
 
-base {
-  archivesName.set("Car_Hisab_v" + android.defaultConfig.versionName)
-}
