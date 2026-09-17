@@ -33,6 +33,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Backspace
@@ -518,6 +519,36 @@ fun DashboardScreen(
                 }
               }
             }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        
+        // Backup Reminder Note
+        Surface(
+          modifier = Modifier.fillMaxWidth(),
+          shape = RoundedCornerShape(8.dp),
+          color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+          border = androidx.compose.foundation.BorderStroke(0.5.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.5f))
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(
+              imageVector = Icons.Default.Info,
+              contentDescription = "Info",
+              tint = MaterialTheme.colorScheme.onTertiaryContainer,
+              modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+              text = if (language == AppLanguage.BANGLA) "আপনার ট্রিপ ডেটা ডাটাবেসে সেভ করতে সেটিংসে গিয়ে ব্যাকআপ বাটনে চাপুন।" else "Push Backup button in settings to save your trip data into database.",
+              fontSize = 12.sp,
+              color = MaterialTheme.colorScheme.onTertiaryContainer,
+              lineHeight = 16.sp
+            )
           }
         }
 
