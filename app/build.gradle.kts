@@ -1,5 +1,3 @@
-import java.text.SimpleDateFormat
-import java.util.Date
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
 plugins {
@@ -153,7 +151,6 @@ dependencies {
 //  "ksp"(libs.moshi.kotlin.codegen)
 }
 
-val buildTime = SimpleDateFormat("dd-MMM-yyyy_hh-mma").format(Date())
 base {
-  archivesName.set("Car_Hisab_v${android.defaultConfig.versionName}_${buildTime}")
+  archivesName.set("Car_Hisab_v${android.defaultConfig.versionName}")
 }
