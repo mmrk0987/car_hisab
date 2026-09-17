@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.carhisab.dxvtr"
     minSdk = 24
     targetSdk = 36
-    versionCode = 9
-    versionName = "9.0.0"
+    versionCode = 5
+    versionName = "5.2.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -152,5 +152,5 @@ dependencies {
 }
 
 base {
-  archivesName.set("Car_Hisab_v${android.defaultConfig.versionName}")
+  archivesName.set("Car_Hisab_v" + android.defaultConfig.versionName)
 }
