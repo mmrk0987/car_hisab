@@ -86,10 +86,26 @@ fun SupabaseSyncSection(
                             fontWeight = FontWeight.Medium
                         )
                     }
+
+                    val lastBackupTime = remember(isSyncing) {
+                        com.example.data.repository.UserPreferencesRepository(context).getLastDriveBackupTime()
+                    }
+                    if (lastBackupTime > 0L) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        val dateFormatted = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault()).format(java.util.Date(lastBackupTime))
+                        Text(
+                            text = if (language == AppLanguage.BANGLA) "সর্বশেষ ক্লাউড ব্যাকআপ: $dateFormatted" else "Last cloud backup: $dateFormatted",
+                            fontSize = 10.5.sp,
+                            color = accentColor.copy(alpha = 0.9f),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
+
+            val isEmailValid = activeEmail.isNotBlank() && !activeEmail.contains("অজানা") && !activeEmail.contains("Not Logged In") && activeEmail.contains("@")
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -97,15 +113,20 @@ fun SupabaseSyncSection(
             ) {
                 Button(
                     onClick = {
-                        if (activeEmail.isBlank()) {
-                            Toast.makeText(context, "Please login first", Toast.LENGTH_SHORT).show()
+                        if (!isEmailValid) {
+                            val alertMsg = if (language == AppLanguage.BANGLA) "দয়া করে প্রথমে সেটিংসে বা প্রোফাইলে সঠিক ইমেইল যুক্ত করুন" else "Please set a valid email in Settings first"
+                            Toast.makeText(context, alertMsg, Toast.LENGTH_SHORT).show()
                             return@Button
                         }
                         isSyncing = true
                         coroutineScope.launch {
                             val success = SupabaseSyncManager.pushToSupabase(context, activeEmail)
                             isSyncing = false
-                            val msg = if (success) "Backup Pushed to Supabase" else "Failed to push backup"
+                            val msg = if (success) {
+                                if (language == AppLanguage.BANGLA) "নাম, প্রোফাইল তথ্য ও ট্রিপ সফলভাবে ব্যাকআপ হয়েছে!" else "Profile info & trip data backed up successfully!"
+                            } else {
+                                if (language == AppLanguage.BANGLA) "ব্যাকআপ ব্যর্থ হয়েছে, ইন্টারনেট সংযোগ চেক করুন" else "Failed to push backup. Check internet connection"
+                            }
                             Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                         }
                     },
@@ -139,15 +160,20 @@ fun SupabaseSyncSection(
 
                 Button(
                     onClick = {
-                        if (activeEmail.isBlank()) {
-                            Toast.makeText(context, "Please login first", Toast.LENGTH_SHORT).show()
+                        if (!isEmailValid) {
+                            val alertMsg = if (language == AppLanguage.BANGLA) "দয়া করে প্রথমে সেটিংসে বা প্রোফাইলে সঠিক ইমেইল যুক্ত করুন" else "Please set a valid email in Settings first"
+                            Toast.makeText(context, alertMsg, Toast.LENGTH_SHORT).show()
                             return@Button
                         }
                         isSyncing = true
                         coroutineScope.launch {
                             val success = SupabaseSyncManager.pullFromSupabase(context, activeEmail)
                             isSyncing = false
-                            val msg = if (success) "Backup Restored Successfully" else "Failed to restore or no backup found"
+                            val msg = if (success) {
+                                if (language == AppLanguage.BANGLA) "প্রোফাইল ও ট্রিপ ডেটা সফলভাবে রিস্টোর হয়েছে!" else "Profile & trip data restored successfully!"
+                            } else {
+                                if (language == AppLanguage.BANGLA) "কোনো ব্যাকআপ পাওয়া যায়নি অথবা রিস্টোর করা যায়নি" else "No backup found or restore failed"
+                            }
                             Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     },

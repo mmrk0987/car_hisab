@@ -2,9 +2,9 @@ package com.example.data.backup
 
 import android.content.Context
 import android.util.Log
-import com.example.BuildConfig
 import com.example.data.auth.SupabaseAuthManager
 import com.example.data.db.AppDatabase
+import com.example.data.repository.UserPreferencesRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -25,14 +25,61 @@ object SupabaseSyncManager {
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
     suspend fun pushToSupabase(context: Context, email: String): Boolean = withContext(Dispatchers.IO) {
-        if (email.isBlank()) return@withContext false
+        val cleanEmail = email.trim().lowercase()
+        if (cleanEmail.isBlank()) return@withContext false
         try {
             val db = AppDatabase.getDatabase(context)
             val trips = db.tripDao().getAllTripsSnapshot()
             val bookings = db.bookingDao().getAllBookingsSnapshot()
+            val userPrefsRepo = UserPreferencesRepository(context)
+            val profile = userPrefsRepo.profileFlow.value
+            val docs = userPrefsRepo.documentsFlow.value
+            val mobil = userPrefsRepo.mobilServiceFlow.value
             
-            val payload = JSONObject()
+            // 1. Profile information (saved once as default driver & car information)
+            val profileObj = JSONObject().apply {
+                put("driver_name", profile.driverName)
+                put("driver_name_bangla", profile.driverNameBangla)
+                put("driver_name_english", profile.driverNameEnglish)
+                put("driver_phone", profile.driverPhone)
+                put("driver_email", profile.driverEmail.ifBlank { cleanEmail })
+                put("car_name", profile.carName)
+                put("car_model", profile.carModel)
+                put("car_number", profile.carNumber)
+                put("birth_date", profile.birthDate)
+                put("user_unique_key", profile.userUniqueKey)
+                put("profile_image_uri", profile.profileImageUri ?: "")
+                put("is_profile_completed", profile.isProfileCompleted)
+            }
+
+            // 2. Documents information
+            val documentsObj = JSONObject().apply {
+                put("tax_token_expiry_millis", docs.taxTokenExpiryMillis)
+                put("tax_token_number", docs.taxTokenNumber)
+                put("fitness_expiry_millis", docs.fitnessExpiryMillis)
+                put("fitness_number", docs.fitnessNumber)
+                put("route_permit_expiry_millis", docs.routePermitExpiryMillis)
+                put("route_permit_number", docs.routePermitNumber)
+                put("insurance_expiry_millis", docs.insuranceExpiryMillis)
+                put("insurance_number", docs.insuranceNumber)
+                put("driving_license_expiry_millis", docs.drivingLicenseExpiryMillis)
+                put("driving_license_number", docs.drivingLicenseNumber)
+            }
+
+            // 3. Mobil & Service information
+            val mobilObj = JSONObject().apply {
+                put("current_odometer_km", mobil.currentOdometerKm)
+                put("last_mobil_change_km", mobil.lastMobilChangeKm)
+                put("mobil_change_interval_km", mobil.mobilChangeIntervalKm)
+                put("last_mobil_change_date_millis", mobil.lastMobilChangeDateMillis)
+                put("mobil_brand_grade", mobil.mobilBrandGrade)
+                put("last_brake_check_km", mobil.lastBrakeCheckKm)
+                put("last_air_filter_km", mobil.lastAirFilterKm)
+                put("last_gear_oil_km", mobil.lastGearOilKm)
+                put("general_notes", mobil.generalNotes)
+            }
             
+            // 4. Trips (newly added over time)
             val tripsArray = JSONArray()
             for (t in trips) {
                 tripsArray.put(JSONObject().apply {
@@ -54,6 +101,7 @@ object SupabaseSyncManager {
                 })
             }
             
+            // 5. Bookings
             val bookingsArray = JSONArray()
             for (b in bookings) {
                 bookingsArray.put(JSONObject().apply {
@@ -74,19 +122,21 @@ object SupabaseSyncManager {
             }
             
             val backupData = JSONObject().apply {
+                put("profile", profileObj)
+                put("documents", documentsObj)
+                put("mobil_service", mobilObj)
                 put("trips", tripsArray)
                 put("bookings", bookingsArray)
             }
             
             val row = JSONObject().apply {
-                put("user_email", email)
+                put("user_email", cleanEmail)
                 put("backup_data", backupData)
                 put("created_at_millis", System.currentTimeMillis())
             }
             
-            // Delete existing row for this email to avoid duplicate rows, or just use upsert if PK was email. 
-            // Since PK is id, we should delete the old one first.
-            val deleteUrl = "${SupabaseAuthManager.DEFAULT_SUPABASE_URL}/rest/v1/car_hisab_sync?user_email=eq.$email"
+            // Delete existing row for this email to avoid duplicate rows
+            val deleteUrl = "${SupabaseAuthManager.DEFAULT_SUPABASE_URL}/rest/v1/car_hisab_sync?user_email=eq.$cleanEmail"
             val delReq = Request.Builder()
                 .url(deleteUrl)
                 .addHeader("apikey", SupabaseAuthManager.DEFAULT_ANON_KEY)
@@ -109,17 +159,23 @@ object SupabaseSyncManager {
             val code = response.code
             val body = response.body?.string()
             Log.d(TAG, "Push HTTP $code, Body: $body")
-            response.isSuccessful
+            if (response.isSuccessful) {
+                userPrefsRepo.setLastDriveBackupTime(System.currentTimeMillis())
+                true
+            } else {
+                false
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Push error: ${e.message}")
+            Log.e(TAG, "Push error: ${e.message}", e)
             false
         }
     }
     
     suspend fun pullFromSupabase(context: Context, email: String): Boolean = withContext(Dispatchers.IO) {
-        if (email.isBlank()) return@withContext false
+        val cleanEmail = email.trim().lowercase()
+        if (cleanEmail.isBlank()) return@withContext false
         try {
-            val url = "${SupabaseAuthManager.DEFAULT_SUPABASE_URL}/rest/v1/car_hisab_sync?user_email=eq.$email&select=*&order=created_at_millis.desc&limit=1"
+            val url = "${SupabaseAuthManager.DEFAULT_SUPABASE_URL}/rest/v1/car_hisab_sync?user_email=eq.$cleanEmail&select=*&order=created_at_millis.desc&limit=1"
             val request = Request.Builder()
                 .url(url)
                 .addHeader("apikey", SupabaseAuthManager.DEFAULT_ANON_KEY)
@@ -135,7 +191,83 @@ object SupabaseSyncManager {
             
             val row = arr.getJSONObject(0)
             val backupData = row.getJSONObject("backup_data")
+            val userPrefsRepo = UserPreferencesRepository(context)
+
+            // 1. Restore Profile Information as Default Driver & Vehicle Info
+            val profileObj = backupData.optJSONObject("profile")
+            if (profileObj != null) {
+                val current = userPrefsRepo.profileFlow.value
+                val bName = profileObj.optString("driver_name", "")
+                val bNameBn = profileObj.optString("driver_name_bangla", "")
+                val bNameEn = profileObj.optString("driver_name_english", "")
+                val bPhone = profileObj.optString("driver_phone", "")
+                val bEmail = profileObj.optString("driver_email", "")
+                val bCarName = profileObj.optString("car_name", "")
+                val bCarModel = profileObj.optString("car_model", "")
+                val bCarNumber = profileObj.optString("car_number", "")
+                val bBirthDate = profileObj.optString("birth_date", "")
+                val bUniqueKey = profileObj.optString("user_unique_key", "")
+                val bImageUri = profileObj.optString("profile_image_uri", "")
+
+                val effectiveName = bName.ifBlank { bNameBn.ifBlank { bNameEn } }
+                val updatedProfile = current.copy(
+                    driverName = effectiveName.ifBlank { current.driverName },
+                    driverNameBangla = bNameBn.ifBlank { effectiveName.ifBlank { current.driverNameBangla } },
+                    driverNameEnglish = bNameEn.ifBlank { effectiveName.ifBlank { current.driverNameEnglish } },
+                    driverPhone = bPhone.ifBlank { current.driverPhone },
+                    driverEmail = bEmail.ifBlank { current.driverEmail.ifBlank { cleanEmail } },
+                    savedEmail = if (current.savedEmail.isBlank()) (bEmail.ifBlank { cleanEmail }) else current.savedEmail,
+                    carName = bCarName.ifBlank { current.carName },
+                    carModel = bCarModel.ifBlank { current.carModel },
+                    carNumber = bCarNumber.ifBlank { current.carNumber },
+                    birthDate = bBirthDate.ifBlank { current.birthDate },
+                    userUniqueKey = bUniqueKey.ifBlank { current.userUniqueKey },
+                    profileImageUri = if (bImageUri.isNotBlank()) bImageUri else current.profileImageUri,
+                    isProfileCompleted = profileObj.optBoolean("is_profile_completed", true),
+                    isLoggedIn = true
+                )
+                userPrefsRepo.updateProfile(updatedProfile)
+                Log.d(TAG, "Restored profile: ${updatedProfile.driverName}, phone: ${updatedProfile.driverPhone}, car: ${updatedProfile.carNumber}")
+            }
+
+            // 2. Restore Vehicle Documents
+            val docObj = backupData.optJSONObject("documents")
+            if (docObj != null) {
+                val currentDocs = userPrefsRepo.documentsFlow.value
+                val restoredDocs = currentDocs.copy(
+                    taxTokenExpiryMillis = docObj.optLong("tax_token_expiry_millis", currentDocs.taxTokenExpiryMillis),
+                    taxTokenNumber = docObj.optString("tax_token_number", currentDocs.taxTokenNumber),
+                    fitnessExpiryMillis = docObj.optLong("fitness_expiry_millis", currentDocs.fitnessExpiryMillis),
+                    fitnessNumber = docObj.optString("fitness_number", currentDocs.fitnessNumber),
+                    routePermitExpiryMillis = docObj.optLong("route_permit_expiry_millis", currentDocs.routePermitExpiryMillis),
+                    routePermitNumber = docObj.optString("route_permit_number", currentDocs.routePermitNumber),
+                    insuranceExpiryMillis = docObj.optLong("insurance_expiry_millis", currentDocs.insuranceExpiryMillis),
+                    insuranceNumber = docObj.optString("insurance_number", currentDocs.insuranceNumber),
+                    drivingLicenseExpiryMillis = docObj.optLong("driving_license_expiry_millis", currentDocs.drivingLicenseExpiryMillis),
+                    drivingLicenseNumber = docObj.optString("driving_license_number", currentDocs.drivingLicenseNumber)
+                )
+                userPrefsRepo.updateDocuments(restoredDocs)
+            }
+
+            // 3. Restore Mobil & Service Information
+            val mobilObj = backupData.optJSONObject("mobil_service")
+            if (mobilObj != null) {
+                val currentMobil = userPrefsRepo.mobilServiceFlow.value
+                val restoredMobil = currentMobil.copy(
+                    currentOdometerKm = mobilObj.optDouble("current_odometer_km", currentMobil.currentOdometerKm),
+                    lastMobilChangeKm = mobilObj.optDouble("last_mobil_change_km", currentMobil.lastMobilChangeKm),
+                    mobilChangeIntervalKm = mobilObj.optDouble("mobil_change_interval_km", currentMobil.mobilChangeIntervalKm),
+                    lastMobilChangeDateMillis = mobilObj.optLong("last_mobil_change_date_millis", currentMobil.lastMobilChangeDateMillis),
+                    mobilBrandGrade = mobilObj.optString("mobil_brand_grade", currentMobil.mobilBrandGrade),
+                    lastBrakeCheckKm = mobilObj.optDouble("last_brake_check_km", currentMobil.lastBrakeCheckKm),
+                    lastAirFilterKm = mobilObj.optDouble("last_air_filter_km", currentMobil.lastAirFilterKm),
+                    lastGearOilKm = mobilObj.optDouble("last_gear_oil_km", currentMobil.lastGearOilKm),
+                    generalNotes = mobilObj.optString("general_notes", currentMobil.generalNotes)
+                )
+                userPrefsRepo.updateMobilService(restoredMobil)
+            }
             
+            // 4. Restore Trips
             val tripsArr = backupData.optJSONArray("trips")
             val tripsToInsert = mutableListOf<com.example.data.model.TripEntity>()
             if (tripsArr != null) {
@@ -162,6 +294,7 @@ object SupabaseSyncManager {
                 }
             }
             
+            // 5. Restore Bookings
             val bookingsArr = backupData.optJSONArray("bookings")
             val bookingsToInsert = mutableListOf<com.example.data.model.BookingEntity>()
             if (bookingsArr != null) {
@@ -198,7 +331,7 @@ object SupabaseSyncManager {
             
             true
         } catch (e: Exception) {
-            Log.e(TAG, "Pull error: ${e.message}")
+            Log.e(TAG, "Pull error: ${e.message}", e)
             false
         }
     }
