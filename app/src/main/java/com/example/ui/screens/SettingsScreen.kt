@@ -60,6 +60,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -116,7 +117,8 @@ fun SettingsScreen(
   onOpenDocuments: () -> Unit = {},
   onExportTrips: (format: ExportFormat, tripsToExport: List<TripEntity>) -> Unit = { _, _ -> },
   lastBackupCount: Int = 0,
-  onLogout: () -> Unit = {}
+  onLogout: () -> Unit = {},
+  onSyncSuccess: () -> Unit = {}
 ) {
   val context = LocalContext.current
   val packageManager = context.packageManager
@@ -181,6 +183,15 @@ fun SettingsScreen(
   var editDriverName by remember { mutableStateOf(profile.driverNameBangla.ifEmpty { profile.driverName }) }
   var editPhone by remember { mutableStateOf(profile.driverPhone) }
   var editEmail by remember { mutableStateOf(profile.driverEmail) }
+
+  LaunchedEffect(profile) {
+    editCarName = profile.carName
+    editCarModel = profile.carModel
+    editCarNumber = profile.carNumber
+    editDriverName = profile.driverNameBangla.ifEmpty { profile.driverName }
+    editPhone = profile.driverPhone
+    editEmail = profile.driverEmail
+  }
 
   val isDark = when (themeMode) {
     AppThemeMode.DARK -> true
@@ -667,10 +678,11 @@ fun SettingsScreen(
 
 
       com.example.ui.components.SupabaseSyncSection(
-        activeEmail = profile.driverEmail.ifBlank { profile.savedEmail }.ifBlank { "অজানা অ্যাকাউন্ট" },
+        activeEmail = profile.driverEmail.ifBlank { profile.savedEmail },
         language = language,
         accentColor = accentColor,
-        isDark = isDark
+        isDark = isDark,
+        onSyncSuccess = onSyncSuccess
       )
 
       Spacer(modifier = Modifier.height(10.dp))

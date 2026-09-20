@@ -31,16 +31,16 @@ object SupabaseSyncManager {
             val db = AppDatabase.getDatabase(context)
             val trips = db.tripDao().getAllTripsSnapshot()
             val bookings = db.bookingDao().getAllBookingsSnapshot()
-            val userPrefsRepo = UserPreferencesRepository(context)
+            val userPrefsRepo = UserPreferencesRepository.getInstance(context)
             val profile = userPrefsRepo.profileFlow.value
             val docs = userPrefsRepo.documentsFlow.value
             val mobil = userPrefsRepo.mobilServiceFlow.value
             
             // 1. Profile information (saved once as default driver & car information)
             val profileObj = JSONObject().apply {
-                put("driver_name", profile.driverName)
-                put("driver_name_bangla", profile.driverNameBangla)
-                put("driver_name_english", profile.driverNameEnglish)
+                put("driver_name", profile.driverName.ifBlank { profile.driverNameBangla.ifBlank { profile.driverNameEnglish } })
+                put("driver_name_bangla", profile.driverNameBangla.ifBlank { profile.driverName })
+                put("driver_name_english", profile.driverNameEnglish.ifBlank { profile.driverName })
                 put("driver_phone", profile.driverPhone)
                 put("driver_email", profile.driverEmail.ifBlank { cleanEmail })
                 put("car_name", profile.carName)
@@ -51,6 +51,7 @@ object SupabaseSyncManager {
                 put("profile_image_uri", profile.profileImageUri ?: "")
                 put("is_profile_completed", profile.isProfileCompleted)
             }
+            Log.d(TAG, "Pushing profile to Supabase: name=${profile.driverName}, phone=${profile.driverPhone}, car=${profile.carNumber}")
 
             // 2. Documents information
             val documentsObj = JSONObject().apply {
@@ -191,7 +192,7 @@ object SupabaseSyncManager {
             
             val row = arr.getJSONObject(0)
             val backupData = row.getJSONObject("backup_data")
-            val userPrefsRepo = UserPreferencesRepository(context)
+            val userPrefsRepo = UserPreferencesRepository.getInstance(context)
 
             // 1. Restore Profile Information as Default Driver & Vehicle Info
             val profileObj = backupData.optJSONObject("profile")
@@ -214,20 +215,30 @@ object SupabaseSyncManager {
                     driverName = effectiveName.ifBlank { current.driverName },
                     driverNameBangla = bNameBn.ifBlank { effectiveName.ifBlank { current.driverNameBangla } },
                     driverNameEnglish = bNameEn.ifBlank { effectiveName.ifBlank { current.driverNameEnglish } },
-                    driverPhone = bPhone.ifBlank { current.driverPhone },
-                    driverEmail = bEmail.ifBlank { current.driverEmail.ifBlank { cleanEmail } },
-                    savedEmail = if (current.savedEmail.isBlank()) (bEmail.ifBlank { cleanEmail }) else current.savedEmail,
-                    carName = bCarName.ifBlank { current.carName },
-                    carModel = bCarModel.ifBlank { current.carModel },
-                    carNumber = bCarNumber.ifBlank { current.carNumber },
-                    birthDate = bBirthDate.ifBlank { current.birthDate },
-                    userUniqueKey = bUniqueKey.ifBlank { current.userUniqueKey },
+                    driverPhone = if (bPhone.isNotBlank()) bPhone else current.driverPhone,
+                    driverEmail = if (bEmail.isNotBlank()) bEmail else cleanEmail,
+                    savedEmail = if (bEmail.isNotBlank()) bEmail else cleanEmail,
+                    carName = if (bCarName.isNotBlank()) bCarName else current.carName,
+                    carModel = if (bCarModel.isNotBlank()) bCarModel else current.carModel,
+                    carNumber = if (bCarNumber.isNotBlank()) bCarNumber else current.carNumber,
+                    birthDate = if (bBirthDate.isNotBlank()) bBirthDate else current.birthDate,
+                    userUniqueKey = if (bUniqueKey.isNotBlank()) bUniqueKey else current.userUniqueKey,
                     profileImageUri = if (bImageUri.isNotBlank()) bImageUri else current.profileImageUri,
-                    isProfileCompleted = profileObj.optBoolean("is_profile_completed", true),
-                    isLoggedIn = true
+                    isProfileCompleted = true,
+                    isLoggedIn = true,
+                    rememberEmail = true
                 )
                 userPrefsRepo.updateProfile(updatedProfile)
                 Log.d(TAG, "Restored profile: ${updatedProfile.driverName}, phone: ${updatedProfile.driverPhone}, car: ${updatedProfile.carNumber}")
+            } else {
+                val current = userPrefsRepo.profileFlow.value
+                val updatedProfile = current.copy(
+                    driverEmail = current.driverEmail.ifBlank { cleanEmail },
+                    savedEmail = current.savedEmail.ifBlank { cleanEmail },
+                    isLoggedIn = true,
+                    rememberEmail = true
+                )
+                userPrefsRepo.updateProfile(updatedProfile)
             }
 
             // 2. Restore Vehicle Documents
@@ -329,6 +340,8 @@ object SupabaseSyncManager {
                 db.bookingDao().insertBookings(bookingsToInsert)
             }
             
+            userPrefsRepo.setLastDriveBackupTime(System.currentTimeMillis())
+            userPrefsRepo.reload()
             true
         } catch (e: Exception) {
             Log.e(TAG, "Pull error: ${e.message}", e)

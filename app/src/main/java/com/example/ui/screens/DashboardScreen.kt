@@ -80,6 +80,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -163,6 +164,12 @@ fun DashboardScreen(
   var editName by remember { mutableStateOf(profile.driverNameBangla.ifEmpty { profile.driverName }) }
   var editCarModel by remember { mutableStateOf(profile.carModel) }
   var editCarPlate by remember { mutableStateOf(profile.carNumber) }
+
+  LaunchedEffect(profile) {
+    editName = profile.driverNameBangla.ifEmpty { profile.driverName }
+    editCarModel = profile.carModel
+    editCarPlate = profile.carNumber
+  }
 
   // Active calendar month according to selectedMonthOffset
   val activeCalendar = remember(selectedMonthOffset) {

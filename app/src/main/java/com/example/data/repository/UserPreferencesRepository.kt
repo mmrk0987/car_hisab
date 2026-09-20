@@ -38,7 +38,18 @@ data class UserProfile(
 
 class UserPreferencesRepository(context: Context) {
   private val prefs: SharedPreferences =
-    context.getSharedPreferences("car_hisab_prefs", Context.MODE_PRIVATE)
+    context.applicationContext.getSharedPreferences("car_hisab_prefs", Context.MODE_PRIVATE)
+
+  companion object {
+    @Volatile
+    private var INSTANCE: UserPreferencesRepository? = null
+
+    fun getInstance(context: Context): UserPreferencesRepository {
+      return INSTANCE ?: synchronized(this) {
+        INSTANCE ?: UserPreferencesRepository(context.applicationContext).also { INSTANCE = it }
+      }
+    }
+  }
 
   private val _languageFlow = MutableStateFlow(loadLanguage())
   val languageFlow: StateFlow<AppLanguage> = _languageFlow.asStateFlow()
@@ -95,53 +106,9 @@ class UserPreferencesRepository(context: Context) {
     var birthDate = prefs.getString("key_birthdate", "") ?: ""
     var driverPhone = prefs.getString("key_driver_phone", "") ?: ""
 
-    // Strip out demo profile data if stored previously
-    var shouldCleanPrefs = false
-    if (dName.contains("রফিকুল") || dName.contains("Rafiqul") || dName == "Demo Driver") {
-      dName = ""
-      shouldCleanPrefs = true
-    }
-    if (dNameBn.contains("রফিকুল") || dNameBn.contains("Rafiqul") || dNameBn == "Demo Driver") {
-      dNameBn = ""
-      shouldCleanPrefs = true
-    }
-    if (dNameEn.contains("Rafiqul") || dNameEn.contains("রফিকুল") || dNameEn == "Demo Driver") {
-      dNameEn = ""
-      shouldCleanPrefs = true
-    }
-    if (carNumber == "ঢাকা মেট্রো চ-১১-২২৩৩") {
-      carNumber = ""
-      shouldCleanPrefs = true
-    }
-    if (carName == "Toyota Noah") {
-      carName = ""
-      shouldCleanPrefs = true
-    }
-    if (carModel == "2020") {
-      carModel = ""
-      shouldCleanPrefs = true
-    }
-    if (birthDate == "15/08/1990") {
-      birthDate = ""
-      shouldCleanPrefs = true
-    }
-    if (driverPhone == "01712345678") {
-      driverPhone = ""
-      shouldCleanPrefs = true
-    }
-
-    if (shouldCleanPrefs) {
-      prefs.edit()
-        .putString("key_driver_name", dName)
-        .putString("key_driver_name_bn", dNameBn)
-        .putString("key_driver_name_en", dNameEn)
-        .putString("key_car_number", carNumber)
-        .putString("key_car_name", carName)
-        .putString("key_car_model", carModel)
-        .putString("key_birthdate", birthDate)
-        .putString("key_driver_phone", driverPhone)
-        .apply()
-    }
+    if (dName == "Demo Driver") dName = ""
+    if (dNameBn == "Demo Driver") dNameBn = ""
+    if (dNameEn == "Demo Driver") dNameEn = ""
 
     return UserProfile(
       carName = carName,
@@ -217,7 +184,16 @@ class UserPreferencesRepository(context: Context) {
       .putString("key_user_unique_key", profile.userUniqueKey)
       .putString("key_current_plan_name", "লাইফটাইম আনলিমিটেড")
       .apply()
-    _profileFlow.value = profile
+    _profileFlow.value = updatedProfile
+  }
+
+  fun reload() {
+    val reloaded = loadProfile()
+    _profileFlow.value = reloaded
+    _documentsFlow.value = loadDocuments()
+    _mobilServiceFlow.value = loadMobilService()
+    _languageFlow.value = loadLanguage()
+    _themeModeFlow.value = loadThemeMode()
   }
 
   fun getLastDriveBackupTime(): Long {

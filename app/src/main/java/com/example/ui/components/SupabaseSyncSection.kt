@@ -28,9 +28,18 @@ fun SupabaseSyncSection(
     activeEmail: String,
     language: AppLanguage,
     accentColor: Color,
-    isDark: Boolean
+    isDark: Boolean,
+    onSyncSuccess: () -> Unit = {}
 ) {
     var isSyncing by remember { mutableStateOf(false) }
+    var syncEmailInput by remember(activeEmail) {
+        mutableStateOf(
+            if (activeEmail.contains("@") && !activeEmail.contains("অজানা") && !activeEmail.contains("Not Logged In")) {
+                activeEmail.trim()
+            } else ""
+        )
+    }
+    var isEditingEmail by remember { mutableStateOf(syncEmailInput.isBlank()) }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
@@ -80,7 +89,7 @@ fun SupabaseSyncSection(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (language == AppLanguage.BANGLA) "অ্যাকাউন্ট: ${activeEmail.ifBlank { "লগইন করা হয়নি" }}" else "Account: ${activeEmail.ifBlank { "Not Logged In" }}",
+                            text = if (language == AppLanguage.BANGLA) "অ্যাকাউন্ট: ${syncEmailInput.ifBlank { "ইমেইল দিন" }}" else "Account: ${syncEmailInput.ifBlank { "Set email" }}",
                             fontSize = 11.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = FontWeight.Medium
@@ -88,7 +97,7 @@ fun SupabaseSyncSection(
                     }
 
                     val lastBackupTime = remember(isSyncing) {
-                        com.example.data.repository.UserPreferencesRepository(context).getLastDriveBackupTime()
+                        com.example.data.repository.UserPreferencesRepository.getInstance(context).getLastDriveBackupTime()
                     }
                     if (lastBackupTime > 0L) {
                         Spacer(modifier = Modifier.height(2.dp))
@@ -103,9 +112,23 @@ fun SupabaseSyncSection(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            if (isEditingEmail || syncEmailInput.isBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = syncEmailInput,
+                    onValueChange = { syncEmailInput = it },
+                    label = { Text(if (language == AppLanguage.BANGLA) "ব্যাকআপ/রিস্টোর জিমেইল" else "Backup/Restore Gmail") },
+                    placeholder = { Text("example@gmail.com") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
 
-            val isEmailValid = activeEmail.isNotBlank() && !activeEmail.contains("অজানা") && !activeEmail.contains("Not Logged In") && activeEmail.contains("@")
+            Spacer(modifier = Modifier.height(14.dp))
+
+            val targetEmail = syncEmailInput.trim().lowercase()
+            val isEmailValid = targetEmail.isNotBlank() && targetEmail.contains("@") && targetEmail.contains(".")
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -114,13 +137,14 @@ fun SupabaseSyncSection(
                 Button(
                     onClick = {
                         if (!isEmailValid) {
-                            val alertMsg = if (language == AppLanguage.BANGLA) "দয়া করে প্রথমে সেটিংসে বা প্রোফাইলে সঠিক ইমেইল যুক্ত করুন" else "Please set a valid email in Settings first"
+                            val alertMsg = if (language == AppLanguage.BANGLA) "দয়া করে প্রথমে সঠিক জিমেইল দিন" else "Please enter a valid Gmail first"
                             Toast.makeText(context, alertMsg, Toast.LENGTH_SHORT).show()
+                            isEditingEmail = true
                             return@Button
                         }
                         isSyncing = true
                         coroutineScope.launch {
-                            val success = SupabaseSyncManager.pushToSupabase(context, activeEmail)
+                            val success = SupabaseSyncManager.pushToSupabase(context, targetEmail)
                             isSyncing = false
                             val msg = if (success) {
                                 if (language == AppLanguage.BANGLA) "নাম, প্রোফাইল তথ্য ও ট্রিপ সফলভাবে ব্যাকআপ হয়েছে!" else "Profile info & trip data backed up successfully!"
@@ -161,20 +185,27 @@ fun SupabaseSyncSection(
                 Button(
                     onClick = {
                         if (!isEmailValid) {
-                            val alertMsg = if (language == AppLanguage.BANGLA) "দয়া করে প্রথমে সেটিংসে বা প্রোফাইলে সঠিক ইমেইল যুক্ত করুন" else "Please set a valid email in Settings first"
+                            val alertMsg = if (language == AppLanguage.BANGLA) "দয়া করে প্রথমে সঠিক জিমেইল দিন" else "Please enter a valid Gmail first"
                             Toast.makeText(context, alertMsg, Toast.LENGTH_SHORT).show()
+                            isEditingEmail = true
                             return@Button
                         }
                         isSyncing = true
                         coroutineScope.launch {
-                            val success = SupabaseSyncManager.pullFromSupabase(context, activeEmail)
+                            val success = SupabaseSyncManager.pullFromSupabase(context, targetEmail)
                             isSyncing = false
-                            val msg = if (success) {
-                                if (language == AppLanguage.BANGLA) "প্রোফাইল ও ট্রিপ ডেটা সফলভাবে রিস্টোর হয়েছে!" else "Profile & trip data restored successfully!"
+                            if (success) {
+                                onSyncSuccess()
+                                val restoredProf = com.example.data.repository.UserPreferencesRepository.getInstance(context).profileFlow.value
+                                val infoDetail = if (restoredProf.driverName.isNotBlank() || restoredProf.driverPhone.isNotBlank()) {
+                                    " (${restoredProf.driverName.ifBlank { "ড্রাইভার" }} | ${restoredProf.driverPhone.ifBlank { restoredProf.carNumber }})"
+                                } else ""
+                                val msg = if (language == AppLanguage.BANGLA) "প্রোফাইল তথ্য$infoDetail ও ট্রিপ ডেটা সফলভাবে রিস্টোর হয়েছে!" else "Profile$infoDetail & trip data restored successfully!"
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             } else {
-                                if (language == AppLanguage.BANGLA) "কোনো ব্যাকআপ পাওয়া যায়নি অথবা রিস্টোর করা যায়নি" else "No backup found or restore failed"
+                                val msg = if (language == AppLanguage.BANGLA) "কোনো ব্যাকআপ পাওয়া যায়নি অথবা রিস্টোর করা যায়নি" else "No backup found or restore failed"
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                             }
-                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         }
                     },
                     enabled = !isSyncing,

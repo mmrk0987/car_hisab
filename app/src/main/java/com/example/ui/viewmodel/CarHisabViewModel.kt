@@ -77,7 +77,7 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
     val db = AppDatabase.getDatabase(application)
     tripRepo = TripRepository(db.tripDao())
     bookingRepo = BookingRepository(db.bookingDao())
-    userPrefsRepo = UserPreferencesRepository(application)
+    userPrefsRepo = UserPreferencesRepository.getInstance(application)
 
     viewModelScope.launch {
       tripRepo.clearPassengerNamesFromTrips()
@@ -162,6 +162,10 @@ class CarHisabViewModel(application: Application) : AndroidViewModel(application
         isProfileCompleted = true
       )
     )
+  }
+
+  fun reloadProfile() {
+    userPrefsRepo.reload()
   }
 
   fun onGoogleAuthSuccess(email: String, name: String = "") {

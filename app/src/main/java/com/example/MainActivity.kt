@@ -731,6 +731,9 @@ class MainActivity : FragmentActivity() {
                   onLogout = {
                     viewModel.logout()
                     Toast.makeText(context, if (language == AppLanguage.BANGLA) "লগআউট সফল হয়েছে" else "Logged out", Toast.LENGTH_SHORT).show()
+                  },
+                  onSyncSuccess = {
+                    viewModel.reloadProfile()
                   }
                 )
               }
